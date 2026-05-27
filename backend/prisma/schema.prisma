@@ -126,11 +126,18 @@ model Program {
   description           String?
   currency              String    @default("USD")
   isActive              Boolean   @default(true)
+  isSandbox             Boolean   @default(false)
   budgetCap             Decimal?  @db.Decimal(18, 2)
   budgetUtilized        Decimal   @default(0) @db.Decimal(18, 2)
   approvalThreshold     Decimal?  @db.Decimal(18, 2)
   cardExpiryDays        Int       @default(365)
   allowPartialRedeem    Boolean   @default(true)
+  ssoEnabled            Boolean   @default(false)
+  ssoProvider           String?
+  ssoIssuerUrl          String?
+  ssoClientId           String?
+  ssoClientSecret       String?
+  ssoRedirectUri        String?
   metadata              Json?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -146,6 +153,7 @@ model Program {
 
   @@index([slug])
   @@index([isActive])
+  @@index([isSandbox])
 }
 
 model Department {

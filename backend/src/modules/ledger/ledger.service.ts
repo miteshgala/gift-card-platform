@@ -2,6 +2,45 @@ import { CardStatus, LedgerEntryType, Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { buildMeta, getPrismaSkip } from '../../utils/pagination';
+import { dispatchWebhook } from '../webhooks/webhooks.service';
+import { WebhookEvent } from '@prisma/client';
+
+// ─── MCC restriction types ────────────────────────────────────────────────────
+
+interface UsageRestrictions {
+  allowedMerchantCategories?: string[];
+  blockedMerchantCategories?: string[];
+  allowedMerchantIds?: string[];
+  blockedMerchantIds?: string[];
+}
+
+function enforceUsageRestrictions(
+  restrictions: UsageRestrictions,
+  merchantCategory?: string,
+  merchantId?: string
+) {
+  const { allowedMerchantCategories, blockedMerchantCategories, allowedMerchantIds, blockedMerchantIds } = restrictions;
+
+  if (merchantCategory) {
+    if (blockedMerchantCategories?.includes(merchantCategory)) {
+      throw new AppError(403, 'MERCHANT_RESTRICTED', `Merchant category ${merchantCategory} is blocked for this card`);
+    }
+    if (allowedMerchantCategories?.length && !allowedMerchantCategories.includes(merchantCategory)) {
+      throw new AppError(403, 'MERCHANT_RESTRICTED', `Card is restricted to merchant categories: ${allowedMerchantCategories.join(', ')}`);
+    }
+  }
+
+  if (merchantId) {
+    if (blockedMerchantIds?.includes(merchantId)) {
+      throw new AppError(403, 'MERCHANT_RESTRICTED', `Merchant ${merchantId} is blocked for this card`);
+    }
+    if (allowedMerchantIds?.length && !allowedMerchantIds.includes(merchantId)) {
+      throw new AppError(403, 'MERCHANT_RESTRICTED', `Card is restricted to specific merchants`);
+    }
+  }
+}
+
+const BALANCE_LOW_THRESHOLD = 10; // $10 default — override via program.metadata.balanceLowThreshold
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -98,6 +137,8 @@ export interface RedeemInput {
   ipAddress?: string;
   location?: string;
   actorId?: string;
+  merchantCategory?: string;  // MCC code e.g. "5812"
+  merchantId?: string;        // external merchant identifier
   metadata?: Record<string, unknown>;
 }
 
@@ -105,13 +146,27 @@ export async function redeemCard(input: RedeemInput) {
   return prisma.$transaction(async (tx) => {
     const card = await tx.giftCard.findUnique({
       where: { id: input.cardId },
-      select: { id: true, status: true, currentBalance: true, currency: true, expiresAt: true },
+      select: {
+        id: true, status: true, currentBalance: true, currency: true,
+        expiresAt: true, programId: true, campaignId: true,
+        campaign: { select: { usageRestrictions: true } },
+        program: { select: { metadata: true } },
+      },
     });
     if (!card) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
     assertCardActive(card.status);
 
     if (card.expiresAt && card.expiresAt < new Date()) {
       throw new AppError(410, 'CARD_EXPIRED', 'Card has expired');
+    }
+
+    // ─── MCC / merchant restrictions ───────────────────────────────────────────
+    if (card.campaign?.usageRestrictions) {
+      enforceUsageRestrictions(
+        card.campaign.usageRestrictions as UsageRestrictions,
+        input.merchantCategory,
+        input.merchantId
+      );
     }
 
     const amount = new Prisma.Decimal(input.amount);
@@ -136,7 +191,11 @@ export async function redeemCard(input: RedeemInput) {
           description: input.description ?? 'Card redemption',
           ipAddress: input.ipAddress,
           location: input.location,
-          metadata: input.metadata as Prisma.InputJsonValue,
+          metadata: {
+            ...(input.metadata ?? {}),
+            ...(input.merchantCategory ? { merchantCategory: input.merchantCategory } : {}),
+            ...(input.merchantId ? { merchantId: input.merchantId } : {}),
+          } as Prisma.InputJsonValue,
         },
       }),
       tx.giftCard.update({
@@ -163,7 +222,24 @@ export async function redeemCard(input: RedeemInput) {
       });
     }
 
-    return { entry, isFullyRedeemed, remainingBalance: balanceAfter.toString() };
+    const result = { entry, isFullyRedeemed, remainingBalance: balanceAfter.toString() };
+
+    // ─── Post-commit: fire BALANCE_LOW webhook if threshold crossed ──────────
+    const threshold = new Prisma.Decimal(
+      (card.program?.metadata as Record<string, unknown>)?.balanceLowThreshold as number
+        ?? BALANCE_LOW_THRESHOLD
+    );
+    if (!isFullyRedeemed && balanceAfter.lte(threshold) && balanceBefore.gt(threshold)) {
+      dispatchWebhook(card.programId, WebhookEvent.BALANCE_LOW, {
+        event: WebhookEvent.BALANCE_LOW,
+        cardId: card.id,
+        remainingBalance: balanceAfter.toString(),
+        threshold: threshold.toString(),
+        currency: card.currency,
+      }, card.id).catch(() => {});
+    }
+
+    return result;
   });
 }
 

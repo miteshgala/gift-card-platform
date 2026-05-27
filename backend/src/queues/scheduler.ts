@@ -4,6 +4,7 @@ import { logger } from '../config/logger';
 import { prisma } from '../config/prisma';
 import { CardStatus, LedgerEntryType, Prisma, WebhookEvent } from '@prisma/client';
 import { dispatchWebhook } from '../modules/webhooks/webhooks.service';
+import { sendExpiryReminder } from '../modules/email/email.service';
 
 // ─── Scheduler queue (repeatable jobs) ───────────────────────────────────────
 
@@ -28,12 +29,17 @@ export async function startScheduler() {
     jobId: 'expiry-sweep',
   });
 
+  await schedulerQueue.add('expiry-reminder', {}, {
+    repeat: { cron: '0 9 * * *' }, // 9:00 AM daily
+    jobId: 'expiry-reminder',
+  });
+
   await schedulerQueue.add('dormancy-fee', {}, {
     repeat: { cron: '0 2 1 * *' }, // 2:00 AM on the 1st of each month
     jobId: 'dormancy-fee',
   });
 
-  logger.info('Scheduler started', { jobs: ['expiry-sweep (daily)', 'dormancy-fee (monthly)'] });
+  logger.info('Scheduler started', { jobs: ['expiry-sweep (daily)', 'expiry-reminder (daily)', 'dormancy-fee (monthly)'] });
 }
 
 // ─── Processor ────────────────────────────────────────────────────────────────
@@ -205,6 +211,76 @@ schedulerQueue.process('dormancy-fee', async (job) => {
 
   logger.info('Dormancy fee sweep complete', { charged, total: dormantCards.length });
   return { charged, total: dormantCards.length };
+});
+
+schedulerQueue.process('expiry-reminder', async (job) => {
+  logger.info('Running expiry reminder sweep');
+  const REMINDER_DAYS = [30, 14, 7];
+  let sent = 0;
+
+  for (const daysOut of REMINDER_DAYS) {
+    // Find cards expiring within a ±12-hour window around exactly `daysOut` days from now
+    const windowStart = new Date(Date.now() + (daysOut * 24 - 12) * 3_600_000);
+    const windowEnd   = new Date(Date.now() + (daysOut * 24 + 12) * 3_600_000);
+
+    const cards = await prisma.giftCard.findMany({
+      where: {
+        status: CardStatus.ACTIVE,
+        expiresAt: { gte: windowStart, lte: windowEnd },
+        currentBalance: { gt: 0 },
+      },
+      select: {
+        id: true,
+        programId: true,
+        recipientEmail: true,
+        recipientName: true,
+        cardNumberMasked: true,
+        currentBalance: true,
+        currency: true,
+        expiresAt: true,
+      },
+      take: 500,
+    });
+
+    for (const card of cards) {
+      try {
+        // Send email reminder if we have an address
+        if (card.recipientEmail && card.expiresAt) {
+          await sendExpiryReminder({
+            to: card.recipientEmail,
+            recipientName: card.recipientName ?? undefined,
+            cardNumberMasked: card.cardNumberMasked,
+            balance: Number(card.currentBalance),
+            currency: card.currency,
+            expiresAt: card.expiresAt,
+            daysRemaining: daysOut,
+          });
+        }
+
+        // Fire webhook regardless of email
+        dispatchWebhook(card.programId, WebhookEvent.CARD_EXPIRED, {
+          event: 'CARD_EXPIRY_WARNING',
+          cardId: card.id,
+          daysRemaining: daysOut,
+          expiresAt: card.expiresAt?.toISOString(),
+          balance: card.currentBalance.toString(),
+          currency: card.currency,
+        }, card.id).catch(() => {});
+
+        sent++;
+      } catch (err) {
+        logger.error('Failed to send expiry reminder', {
+          cardId: card.id, daysOut,
+          error: err instanceof Error ? err.message : 'Unknown',
+        });
+      }
+    }
+
+    await job.progress(Math.round((REMINDER_DAYS.indexOf(daysOut) + 1) / REMINDER_DAYS.length * 100));
+  }
+
+  logger.info('Expiry reminder sweep complete', { sent });
+  return { sent };
 });
 
 // ─── Event handlers ───────────────────────────────────────────────────────────

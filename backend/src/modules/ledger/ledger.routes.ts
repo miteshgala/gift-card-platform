@@ -59,6 +59,8 @@ const redeemSchema = z.object({
   description: z.string().optional(),
   referenceId: z.string().optional(),
   location: z.string().optional(),
+  merchantCategory: z.string().max(10).optional(),  // MCC code e.g. "5812"
+  merchantId: z.string().max(64).optional(),         // external merchant identifier
 });
 
 router.post('/redeem', validate(redeemSchema), async (req: AuthenticatedRequest, res) => {
@@ -69,6 +71,8 @@ router.post('/redeem', validate(redeemSchema), async (req: AuthenticatedRequest,
     description: req.body.description,
     referenceId: req.body.referenceId,
     location: req.body.location,
+    merchantCategory: req.body.merchantCategory,
+    merchantId: req.body.merchantId,
     ipAddress: req.ip,
     actorId: req.user?.sub,
   });

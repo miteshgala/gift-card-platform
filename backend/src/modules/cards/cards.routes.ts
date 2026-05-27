@@ -101,6 +101,19 @@ router.post(
   }
 );
 
+// ─── Reissue / replace card ───────────────────────────────────────────────────
+const reissueSchema = z.object({ reason: z.string().min(1) });
+
+router.post(
+  '/:cardId/reissue',
+  requireMinRole(UserRole.SUPPORT),
+  validate(reissueSchema),
+  async (req: AuthenticatedRequest, res) => {
+    const result = await cardsService.reissueCard(req.params.cardId, req.body.reason, req.user!.sub);
+    sendCreated(res, result);
+  }
+);
+
 // ─── Cancel ───────────────────────────────────────────────────────────────────
 const cancelSchema = z.object({ reason: z.string().min(1) });
 

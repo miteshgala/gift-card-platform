@@ -293,6 +293,112 @@ export async function activateCard(cardId: string, pin: string, actorId: string)
   return activated;
 }
 
+// ─── Reissue / replace a card ─────────────────────────────────────────────────
+
+export async function reissueCard(cardId: string, reason: string, actorId: string) {
+  const old = await prisma.giftCard.findUnique({ where: { id: cardId } });
+  if (!old) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
+  if ([CardStatus.CANCELLED, CardStatus.REDEEMED].includes(old.status)) {
+    throw new AppError(400, 'INVALID_STATUS', `Cannot reissue a ${old.status} card`);
+  }
+
+  // Generate new card credentials
+  const newCardNumber = generateCardNumber();
+  const newPin = generatePin();
+  const newCardNumberHash = hashCardNumber(newCardNumber);
+  const newPinHash = await hashPin(newPin);
+  const newCardNumberMasked = maskCardNumber(newCardNumber);
+
+  const remainingBalance = old.currentBalance;
+  const expiresAt = old.expiresAt; // preserve original expiry
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Cancel the old card and zero its balance
+    const cancelled = await tx.giftCard.update({
+      where: { id: cardId },
+      data: { status: CardStatus.CANCELLED, cancelledAt: new Date(), currentBalance: new Prisma.Decimal(0) },
+    });
+
+    // 2. Write a TRANSFER_OUT ledger on the old card
+    await tx.ledgerEntry.create({
+      data: {
+        cardId: old.id,
+        type: 'TRANSFER_OUT',
+        amount: remainingBalance,
+        balanceBefore: remainingBalance,
+        balanceAfter: new Prisma.Decimal(0),
+        currency: old.currency,
+        description: `Reissue: balance transferred to replacement card — ${reason}`,
+      },
+    });
+
+    // 3. Issue replacement card in same program/campaign with carried-over balance
+    const newCard = await tx.giftCard.create({
+      data: {
+        programId: old.programId,
+        campaignId: old.campaignId,
+        cardNumberHash: newCardNumberHash,
+        cardNumberMasked: newCardNumberMasked,
+        pinHash: newPinHash,
+        cardType: old.cardType,
+        status: old.cardType === CardType.PHYSICAL ? CardStatus.PENDING : CardStatus.ACTIVE,
+        currency: old.currency,
+        initialBalance: remainingBalance,
+        currentBalance: remainingBalance,
+        recipientEmail: old.recipientEmail,
+        recipientName: old.recipientName,
+        expiresAt,
+        activatedAt: old.cardType === CardType.PHYSICAL ? null : new Date(),
+        metadata: old.metadata,
+      },
+    });
+
+    // 4. Write a TRANSFER_IN ledger on the new card
+    await tx.ledgerEntry.create({
+      data: {
+        cardId: newCard.id,
+        type: 'TRANSFER_IN',
+        amount: remainingBalance,
+        balanceBefore: new Prisma.Decimal(0),
+        balanceAfter: remainingBalance,
+        currency: newCard.currency,
+        description: `Reissue: balance carried over from card ...${old.id.slice(-4)}`,
+      },
+    });
+
+    // 5. Audit log on old card
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'CARD_CANCEL',
+        resourceType: 'GiftCard',
+        resourceId: old.id,
+        diff: { reason, reissuedAs: newCard.id, balanceTransferred: remainingBalance.toString() },
+      },
+    });
+
+    // 6. Audit log on new card
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'CARD_CREATE',
+        resourceType: 'GiftCard',
+        resourceId: newCard.id,
+        diff: { reissueOf: old.id, reason },
+      },
+    });
+
+    return { cancelled, newCard };
+  });
+
+  return {
+    oldCard: result.cancelled,
+    newCard: result.newCard,
+    cardNumber: newCardNumber,  // plaintext — return once
+    pin: newPin,
+  };
+}
+
 export async function cancelCard(cardId: string, reason: string, actorId: string) {
   const card = await prisma.giftCard.findUnique({ where: { id: cardId } });
   if (!card) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');

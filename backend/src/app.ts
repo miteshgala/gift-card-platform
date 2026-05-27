@@ -11,9 +11,11 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { apiRateLimiter } from './middleware/rateLimiter';
+import { resolveSandboxMode } from './middleware/sandbox';
 
 // Route modules
 import authRoutes from './modules/auth/auth.routes';
+import ssoRoutes from './modules/auth/sso.routes';
 import cardsRoutes from './modules/cards/cards.routes';
 import ledgerRoutes from './modules/ledger/ledger.routes';
 import fraudRoutes from './modules/fraud/fraud.routes';
@@ -42,6 +44,9 @@ app.use(morgan('combined', { stream: { write: (msg) => logger.http(msg.trim()) }
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 app.use('/api/', apiRateLimiter);
+
+// ─── Sandbox / API Key Resolution ────────────────────────────────────────────
+app.use('/api/v1/', resolveSandboxMode);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -74,6 +79,7 @@ app.get('/api/v1/openapi.json', (_req, res) => res.json(swaggerSpec));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/auth/sso', ssoRoutes);
 app.use('/api/v1/cards', cardsRoutes);
 app.use('/api/v1/ledger', ledgerRoutes);
 app.use('/api/v1/fraud', fraudRoutes);
