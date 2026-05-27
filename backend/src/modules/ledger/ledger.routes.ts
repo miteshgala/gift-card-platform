@@ -118,6 +118,29 @@ router.post(
   }
 );
 
+// ─── Card-to-card transfer ────────────────────────────────────────────────────
+const transferSchema = z.object({
+  fromCardId: z.string().cuid(),
+  toCardId: z.string().cuid(),
+  amount: z.number().positive(),
+  description: z.string().optional(),
+  referenceId: z.string().optional(),
+});
+
+router.post(
+  '/transfer',
+  requireMinRole(UserRole.SUPPORT),
+  validate(transferSchema),
+  async (req: AuthenticatedRequest, res) => {
+    const result = await ledgerService.transferBalance({
+      ...req.body,
+      actorId: req.user!.sub,
+      ipAddress: req.ip,
+    });
+    sendSuccess(res, result, 201);
+  }
+);
+
 // ─── Balance ──────────────────────────────────────────────────────────────────
 router.get('/cards/:cardId/balance', async (req, res) => {
   const balance = await ledgerService.getBalance(req.params.cardId);

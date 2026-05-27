@@ -25,11 +25,27 @@ export async function createOrder(input: CreateOrderInput) {
   const denomination = input.denomination ?? 0;
   const totalValue = new Prisma.Decimal(denomination * input.quantity);
 
-  // Budget check
+  // Program budget check
   if (program.budgetCap) {
     const remaining = program.budgetCap.sub(program.budgetUtilized);
     if (totalValue.gt(remaining)) {
-      throw new AppError(402, 'BUDGET_EXCEEDED', `Order exceeds remaining program budget of ${remaining.toString()}`);
+      throw new AppError(402, 'BUDGET_EXCEEDED',
+        `Order value $${totalValue} exceeds remaining program budget of $${remaining}`);
+    }
+  }
+
+  // Department budget check
+  if (input.departmentId) {
+    const dept = await prisma.department.findUnique({ where: { id: input.departmentId } });
+    if (!dept || dept.programId !== input.programId) {
+      throw new AppError(404, 'DEPARTMENT_NOT_FOUND', 'Department not found');
+    }
+    if (dept.budgetCap) {
+      const deptRemaining = dept.budgetCap.sub(dept.budgetUsed);
+      if (totalValue.gt(deptRemaining)) {
+        throw new AppError(402, 'DEPARTMENT_BUDGET_EXCEEDED',
+          `Order value $${totalValue} exceeds remaining department budget of $${deptRemaining}`);
+      }
     }
   }
 
@@ -64,8 +80,20 @@ export async function createOrder(input: CreateOrderInput) {
     include: { orderItems: true },
   });
 
-  // Auto-dispatch if approved
+  // Auto-dispatch if approved — commit budget immediately
   if (!needsApproval) {
+    await prisma.$transaction(async (tx) => {
+      await tx.program.update({
+        where: { id: input.programId },
+        data: { budgetUtilized: { increment: totalValue } },
+      });
+      if (input.departmentId) {
+        await tx.department.update({
+          where: { id: input.departmentId },
+          data: { budgetUsed: { increment: totalValue } },
+        });
+      }
+    });
     await dispatchOrder(order.id);
   }
 
@@ -79,13 +107,45 @@ export async function approveOrder(orderId: string, approvedByUserId: string) {
     throw new AppError(400, 'INVALID_STATUS', `Order status is ${order.status}`);
   }
 
-  await prisma.order.update({
-    where: { id: orderId },
-    data: {
-      status: OrderStatus.APPROVED,
-      approvedByUserId,
-      approvedAt: new Date(),
-    },
+  // Re-validate budget at approval time (values may have changed since order was created)
+  const program = await prisma.program.findUnique({ where: { id: order.programId } });
+  if (!program || !program.isActive) throw new AppError(400, 'PROGRAM_INACTIVE', 'Program is no longer active');
+
+  if (program.budgetCap) {
+    const remaining = program.budgetCap.sub(program.budgetUtilized);
+    if (order.totalValue.gt(remaining)) {
+      throw new AppError(402, 'BUDGET_EXCEEDED',
+        `Order value $${order.totalValue} exceeds remaining program budget of $${remaining}`);
+    }
+  }
+
+  if (order.departmentId) {
+    const dept = await prisma.department.findUnique({ where: { id: order.departmentId } });
+    if (dept?.budgetCap) {
+      const deptRemaining = dept.budgetCap.sub(dept.budgetUsed);
+      if (order.totalValue.gt(deptRemaining)) {
+        throw new AppError(402, 'DEPARTMENT_BUDGET_EXCEEDED',
+          `Order value $${order.totalValue} exceeds remaining department budget of $${deptRemaining}`);
+      }
+    }
+  }
+
+  // Commit budget utilization atomically with the approval
+  await prisma.$transaction(async (tx) => {
+    await tx.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.APPROVED, approvedByUserId, approvedAt: new Date() },
+    });
+    await tx.program.update({
+      where: { id: order.programId },
+      data: { budgetUtilized: { increment: order.totalValue } },
+    });
+    if (order.departmentId) {
+      await tx.department.update({
+        where: { id: order.departmentId },
+        data: { budgetUsed: { increment: order.totalValue } },
+      });
+    }
   });
 
   await dispatchOrder(orderId);

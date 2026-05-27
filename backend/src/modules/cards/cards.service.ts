@@ -47,7 +47,8 @@ export async function issueCard(input: IssueCardInput) {
       cardNumberMasked,
       pinHash,
       cardType: input.cardType ?? CardType.DIGITAL,
-      status: CardStatus.ACTIVE,
+      // Physical cards start PENDING — recipient must call /activate with their PIN
+      status: (input.cardType === CardType.PHYSICAL) ? CardStatus.PENDING : CardStatus.ACTIVE,
       currency: input.currency ?? 'USD',
       initialBalance: new Prisma.Decimal(input.initialBalance),
       currentBalance: new Prisma.Decimal(input.initialBalance),
@@ -55,7 +56,7 @@ export async function issueCard(input: IssueCardInput) {
       recipientEmail: input.recipientEmail,
       recipientName: input.recipientName,
       expiresAt,
-      activatedAt: new Date(),
+      activatedAt: (input.cardType === CardType.PHYSICAL) ? null : new Date(),
       metadata: input.metadata as Prisma.InputJsonValue,
     },
   });
@@ -239,6 +240,57 @@ export async function unfreezeCard(cardId: string, actorId: string) {
   ]);
 
   return updated;
+}
+
+// ─── Activate physical card ───────────────────────────────────────────────────
+
+export async function activateCard(cardId: string, pin: string, actorId: string) {
+  const card = await prisma.giftCard.findUnique({ where: { id: cardId } });
+  if (!card) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
+  if (card.cardType !== 'PHYSICAL') {
+    throw new AppError(400, 'NOT_PHYSICAL', 'Only physical cards require activation');
+  }
+  if (card.status !== 'PENDING') {
+    throw new AppError(409, 'ALREADY_ACTIVATED', `Card is already ${card.status.toLowerCase()}`);
+  }
+
+  // Verify PIN lockout
+  if (card.pinLockedUntil && card.pinLockedUntil > new Date()) {
+    throw new AppError(423, 'CARD_LOCKED',
+      `Card locked due to too many PIN attempts. Unlocks at ${card.pinLockedUntil.toISOString()}`);
+  }
+
+  const pinValid = await verifyPin(pin, card.pinHash);
+  if (!pinValid) {
+    const attempts = card.pinAttempts + 1;
+    const shouldLock = attempts >= env.MAX_PIN_ATTEMPTS;
+    await prisma.giftCard.update({
+      where: { id: cardId },
+      data: {
+        pinAttempts: attempts,
+        pinLockedUntil: shouldLock ? new Date(Date.now() + 24 * 60 * 60 * 1000) : null,
+      },
+    });
+    if (shouldLock) throw new AppError(423, 'CARD_LOCKED', 'Card locked for 24 hours after too many failed PIN attempts');
+    throw new AppError(401, 'INVALID_PIN', `Invalid PIN. ${env.MAX_PIN_ATTEMPTS - attempts} attempts remaining`);
+  }
+
+  const [activated] = await prisma.$transaction([
+    prisma.giftCard.update({
+      where: { id: cardId },
+      data: { status: 'ACTIVE', activatedAt: new Date(), pinAttempts: 0, pinLockedUntil: null },
+    }),
+    prisma.auditLog.create({
+      data: {
+        actorId,
+        action: 'CARD_ACTIVATE',
+        resourceType: 'GiftCard',
+        resourceId: cardId,
+      },
+    }),
+  ]);
+
+  return activated;
 }
 
 export async function cancelCard(cardId: string, reason: string, actorId: string) {

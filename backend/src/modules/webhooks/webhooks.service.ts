@@ -1,9 +1,9 @@
-import crypto from 'crypto';
 import { WebhookEvent, WebhookDeliveryStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../config/logger';
 import { generateSecureToken, hashApiKey } from '../../utils/crypto';
+import { webhookQueue } from '../../queues/webhook.queue';
 
 // ─── Create Webhook Endpoint ──────────────────────────────────────────────────
 
@@ -53,65 +53,17 @@ export async function dispatchWebhook(
       },
     });
 
-    // Attempt delivery (retry via job queue in production)
-    deliverWebhook(delivery.id, endpoint.url, endpoint.secretHash, payload).catch(() => {});
-  }
-}
-
-async function deliverWebhook(
-  deliveryId: string,
-  url: string,
-  secretHash: string,
-  payload: Record<string, unknown>
-): Promise<void> {
-  const body = JSON.stringify(payload);
-  const timestamp = Math.floor(Date.now() / 1000);
-  const signature = crypto
-    .createHmac('sha256', secretHash)
-    .update(`${timestamp}.${body}`)
-    .digest('hex');
-
-  let responseStatus: number | undefined;
-  let responseBody: string | undefined;
-  let errorMessage: string | undefined;
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-GiftCard-Signature': `t=${timestamp},v1=${signature}`,
-        'X-GiftCard-Event': payload['event'] as string,
+    // Enqueue via Bull for reliable delivery with exponential backoff retry
+    await webhookQueue.add(
+      {
+        deliveryId: delivery.id,
+        url: endpoint.url,
+        secretHash: endpoint.secretHash,
+        payload,
+        attempt: 0,
       },
-      body,
-      signal: AbortSignal.timeout(10_000),
-    });
-    responseStatus = res.status;
-    responseBody = await res.text().catch(() => '');
-
-    await prisma.webhookDelivery.update({
-      where: { id: deliveryId },
-      data: {
-        status: res.ok ? WebhookDeliveryStatus.SUCCESS : WebhookDeliveryStatus.FAILED,
-        attempts: { increment: 1 },
-        lastAttemptAt: new Date(),
-        responseStatus,
-        responseBody: responseBody?.slice(0, 1000),
-      },
-    });
-  } catch (err) {
-    errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    logger.error('Webhook delivery failed', { deliveryId, url, error: errorMessage });
-
-    await prisma.webhookDelivery.update({
-      where: { id: deliveryId },
-      data: {
-        status: WebhookDeliveryStatus.FAILED,
-        attempts: { increment: 1 },
-        lastAttemptAt: new Date(),
-        errorMessage,
-      },
-    });
+      { jobId: `${delivery.id}-attempt-0` }
+    );
   }
 }
 

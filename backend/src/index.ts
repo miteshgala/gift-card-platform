@@ -7,11 +7,14 @@ import app from './app';
 
 // Import queues to initialize workers
 import './queues/issuance.queue';
+import './queues/webhook.queue';
+import { startScheduler } from './queues/scheduler';
 
 async function main() {
   try {
     await connectDB();
     await connectRedis();
+    await startScheduler();
 
     const server = app.listen(env.PORT, () => {
       logger.info(`🚀 Gift Card API running on port ${env.PORT}`, {

@@ -293,6 +293,123 @@ export async function adjustCard(input: AdjustmentInput) {
   });
 }
 
+// ─── Card-to-card transfer ────────────────────────────────────────────────────
+
+export interface TransferInput {
+  fromCardId: string;
+  toCardId: string;
+  amount: number;
+  description?: string;
+  referenceId?: string;
+  actorId: string;
+  ipAddress?: string;
+}
+
+export async function transferBalance(input: TransferInput) {
+  return prisma.$transaction(async (tx) => {
+    const [fromCard, toCard] = await Promise.all([
+      tx.giftCard.findUnique({
+        where: { id: input.fromCardId },
+        select: { id: true, status: true, currentBalance: true, currency: true, expiresAt: true },
+      }),
+      tx.giftCard.findUnique({
+        where: { id: input.toCardId },
+        select: { id: true, status: true, currentBalance: true, currency: true, expiresAt: true },
+      }),
+    ]);
+
+    if (!fromCard) throw new AppError(404, 'SOURCE_CARD_NOT_FOUND', 'Source card not found');
+    if (!toCard) throw new AppError(404, 'DEST_CARD_NOT_FOUND', 'Destination card not found');
+    if (input.fromCardId === input.toCardId) throw new AppError(400, 'SAME_CARD', 'Cannot transfer to the same card');
+
+    assertCardActive(fromCard.status);
+    assertCardActive(toCard.status);
+
+    if (fromCard.currency !== toCard.currency) {
+      throw new AppError(400, 'CURRENCY_MISMATCH',
+        `Cannot transfer between cards with different currencies (${fromCard.currency} → ${toCard.currency})`);
+    }
+
+    const amount = new Prisma.Decimal(input.amount);
+    if (amount.gt(fromCard.currentBalance)) {
+      throw new AppError(402, 'INSUFFICIENT_BALANCE',
+        `Insufficient balance. Available: ${fromCard.currentBalance.toString()}`);
+    }
+
+    const fromBalanceBefore = fromCard.currentBalance;
+    const fromBalanceAfter = fromBalanceBefore.sub(amount);
+    const toBalanceBefore = toCard.currentBalance;
+    const toBalanceAfter = toBalanceBefore.add(amount);
+    const now = new Date();
+    const description = input.description ?? `Transfer to card ...${toCard.id.slice(-4)}`;
+
+    const [outEntry, inEntry] = await Promise.all([
+      tx.ledgerEntry.create({
+        data: {
+          cardId: fromCard.id,
+          type: LedgerEntryType.TRANSFER_OUT,
+          amount,
+          balanceBefore: fromBalanceBefore,
+          balanceAfter: fromBalanceAfter,
+          currency: fromCard.currency,
+          referenceId: input.referenceId,
+          description,
+          ipAddress: input.ipAddress,
+        },
+      }),
+      tx.ledgerEntry.create({
+        data: {
+          cardId: toCard.id,
+          type: LedgerEntryType.TRANSFER_IN,
+          amount,
+          balanceBefore: toBalanceBefore,
+          balanceAfter: toBalanceAfter,
+          currency: toCard.currency,
+          referenceId: input.referenceId,
+          description: `Transfer from card ...${fromCard.id.slice(-4)}`,
+          ipAddress: input.ipAddress,
+        },
+      }),
+    ]);
+
+    await Promise.all([
+      tx.giftCard.update({
+        where: { id: fromCard.id },
+        data: {
+          currentBalance: fromBalanceAfter,
+          status: fromBalanceAfter.equals(0) ? CardStatus.REDEEMED : CardStatus.ACTIVE,
+          lastTransactionAt: now,
+        },
+      }),
+      tx.giftCard.update({
+        where: { id: toCard.id },
+        data: { currentBalance: toBalanceAfter, lastTransactionAt: now },
+      }),
+      tx.auditLog.create({
+        data: {
+          actorId: input.actorId,
+          action: 'LEDGER_ADJUSTMENT',
+          resourceType: 'GiftCard',
+          resourceId: fromCard.id,
+          diff: {
+            type: 'TRANSFER',
+            amount: input.amount,
+            fromCard: fromCard.id,
+            toCard: toCard.id,
+          },
+        },
+      }),
+    ]);
+
+    return {
+      outEntry,
+      inEntry,
+      fromCard: { id: fromCard.id, newBalance: fromBalanceAfter.toString() },
+      toCard: { id: toCard.id, newBalance: toBalanceAfter.toString() },
+    };
+  });
+}
+
 // ─── Balance query ────────────────────────────────────────────────────────────
 
 export async function getBalance(cardId: string) {

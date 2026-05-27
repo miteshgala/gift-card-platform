@@ -66,6 +66,18 @@ router.get('/:cardId', async (req: AuthenticatedRequest, res) => {
   sendSuccess(res, card);
 });
 
+// ─── Activate physical card ───────────────────────────────────────────────────
+const activateSchema = z.object({ pin: z.string().regex(/^\d{4}$/) });
+
+router.post(
+  '/:cardId/activate',
+  validate(activateSchema),
+  async (req: AuthenticatedRequest, res) => {
+    const card = await cardsService.activateCard(req.params.cardId, req.body.pin, req.user!.sub);
+    sendSuccess(res, card);
+  }
+);
+
 // ─── Freeze ───────────────────────────────────────────────────────────────────
 const freezeSchema = z.object({ reason: z.string().min(1) });
 
