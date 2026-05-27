@@ -1,0 +1,477 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  PROGRAM_ADMIN
+  FINANCE
+  MARKETING
+  SUPPORT
+  READ_ONLY
+}
+
+enum CardStatus {
+  PENDING
+  ACTIVE
+  FROZEN
+  REDEEMED
+  EXPIRED
+  CANCELLED
+}
+
+enum CardType {
+  PHYSICAL
+  DIGITAL
+}
+
+enum LedgerEntryType {
+  LOAD
+  REDEEM
+  REFUND
+  ADJUSTMENT
+  EXPIRY_FEE
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum FulfillmentStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  RESENT
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum WebhookEvent {
+  CARD_ISSUED
+  CARD_REDEEMED
+  CARD_FROZEN
+  CARD_EXPIRED
+  CARD_CANCELLED
+  BALANCE_LOW
+  ORDER_COMPLETED
+  ORDER_FAILED
+  FRAUD_FLAGGED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+enum AuditAction {
+  USER_REGISTER
+  USER_LOGIN
+  USER_LOGOUT
+  USER_LOGIN_FAILED
+  USER_PASSWORD_CHANGE
+  USER_ROLE_CHANGE
+  TOKEN_REFRESH
+  CARD_CREATE
+  CARD_ACTIVATE
+  CARD_FREEZE
+  CARD_UNFREEZE
+  CARD_CANCEL
+  CARD_EXPIRE
+  LEDGER_LOAD
+  LEDGER_REDEEM
+  LEDGER_REFUND
+  LEDGER_ADJUSTMENT
+  ORDER_CREATE
+  ORDER_APPROVE
+  ORDER_CANCEL
+  PROGRAM_CREATE
+  PROGRAM_UPDATE
+  API_KEY_CREATE
+  API_KEY_REVOKE
+  WEBHOOK_CREATE
+  WEBHOOK_DELETE
+  FRAUD_FLAG_CREATE
+  FRAUD_FLAG_RESOLVE
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model Program {
+  id                    String    @id @default(cuid())
+  name                  String
+  slug                  String    @unique
+  description           String?
+  currency              String    @default("USD")
+  isActive              Boolean   @default(true)
+  budgetCap             Decimal?  @db.Decimal(18, 2)
+  budgetUtilized        Decimal   @default(0) @db.Decimal(18, 2)
+  approvalThreshold     Decimal?  @db.Decimal(18, 2)
+  cardExpiryDays        Int       @default(365)
+  allowPartialRedeem    Boolean   @default(true)
+  metadata              Json?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  users                 User[]
+  giftCards             GiftCard[]
+  orders                Order[]
+  campaigns             Campaign[]
+  velocityRules         VelocityRule[]
+  webhookEndpoints      WebhookEndpoint[]
+  apiKeys               ApiKey[]
+  departments           Department[]
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model Department {
+  id            String    @id @default(cuid())
+  programId     String
+  name          String
+  budgetCap     Decimal?  @db.Decimal(18, 2)
+  budgetUsed    Decimal   @default(0) @db.Decimal(18, 2)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  program       Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  orders        Order[]
+
+  @@unique([programId, name])
+  @@index([programId])
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  role            UserRole  @default(READ_ONLY)
+  programId       String?
+  isActive        Boolean   @default(true)
+  emailVerified   Boolean   @default(false)
+  lastLoginAt     DateTime?
+  pinAttempts     Int       @default(0)
+  lockedUntil     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  program         Program?      @relation(fields: [programId], references: [id])
+  refreshTokens   RefreshToken[]
+  auditLogs       AuditLog[]    @relation("ActorLogs")
+  approvedOrders  Order[]       @relation("ApprovedOrders")
+
+  @@index([email])
+  @@index([programId])
+  @@index([role])
+}
+
+model RefreshToken {
+  id          String    @id @default(cuid())
+  userId      String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  userAgent   String?
+  ipAddress   String?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model GiftCard {
+  id                  String      @id @default(cuid())
+  programId           String
+  campaignId          String?
+  orderId             String?
+  cardNumberHash      String      @unique
+  cardNumberMasked    String      // last 4 digits visible: ****-****-****-1234
+  pinHash             String
+  cardType            CardType    @default(DIGITAL)
+  status              CardStatus  @default(PENDING)
+  currency            String      @default("USD")
+  initialBalance      Decimal     @db.Decimal(18, 2)
+  currentBalance      Decimal     @db.Decimal(18, 2)
+  denomination        Decimal?    @db.Decimal(18, 2) // null = variable
+  recipientEmail      String?
+  recipientName       String?
+  registeredEmail     String?     // customer self-registration
+  pinAttempts         Int         @default(0)
+  pinLockedUntil      DateTime?
+  activatedAt         DateTime?
+  expiresAt           DateTime?
+  redeemedAt          DateTime?
+  cancelledAt         DateTime?
+  frozenAt            DateTime?
+  lastTransactionAt   DateTime?
+  lastLocation        String?
+  metadata            Json?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  program             Program         @relation(fields: [programId], references: [id])
+  campaign            Campaign?       @relation(fields: [campaignId], references: [id])
+  order               Order?          @relation(fields: [orderId], references: [id])
+  ledgerEntries       LedgerEntry[]
+  fraudFlags          FraudFlag[]
+  webhookDeliveries   WebhookDelivery[]
+
+  @@index([programId])
+  @@index([campaignId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([recipientEmail])
+  @@index([registeredEmail])
+}
+
+model LedgerEntry {
+  id              String           @id @default(cuid())
+  cardId          String
+  type            LedgerEntryType
+  amount          Decimal          @db.Decimal(18, 2)
+  balanceBefore   Decimal          @db.Decimal(18, 2)
+  balanceAfter    Decimal          @db.Decimal(18, 2)
+  currency        String           @default("USD")
+  referenceId     String?          // external order/transaction ref
+  description     String?
+  ipAddress       String?
+  location        String?
+  metadata        Json?
+  createdAt       DateTime         @default(now())
+
+  card            GiftCard         @relation(fields: [cardId], references: [id])
+
+  @@index([cardId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([referenceId])
+}
+
+model Order {
+  id                  String          @id @default(cuid())
+  programId           String
+  departmentId        String?
+  requestedByUserId   String?
+  approvedByUserId    String?
+  campaignId          String?
+  status              OrderStatus     @default(DRAFT)
+  quantity            Int
+  denomination        Decimal?        @db.Decimal(18, 2)
+  totalValue          Decimal         @db.Decimal(18, 2)
+  currency            String          @default("USD")
+  cardType            CardType        @default(DIGITAL)
+  recipientListUrl    String?         // S3 or local CSV path
+  jobId               String?         // Bull job ID
+  jobProgress         Int             @default(0)
+  failureReason       String?
+  approvedAt          DateTime?
+  completedAt         DateTime?
+  metadata            Json?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  program             Program         @relation(fields: [programId], references: [id])
+  department          Department?     @relation(fields: [departmentId], references: [id])
+  approvedBy          User?           @relation("ApprovedOrders", fields: [approvedByUserId], references: [id])
+  campaign            Campaign?       @relation(fields: [campaignId], references: [id])
+  giftCards           GiftCard[]
+  orderItems          OrderItem[]
+
+  @@index([programId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id                  String            @id @default(cuid())
+  orderId             String
+  recipientEmail      String?
+  recipientName       String?
+  denomination        Decimal           @db.Decimal(18, 2)
+  fulfillmentStatus   FulfillmentStatus @default(PENDING)
+  deliveredAt         DateTime?
+  resendCount         Int               @default(0)
+  lastSentAt          DateTime?
+  errorMessage        String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  order               Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([fulfillmentStatus])
+}
+
+model Campaign {
+  id                  String    @id @default(cuid())
+  programId           String
+  name                String
+  description         String?
+  isActive            Boolean   @default(true)
+  bonusLoadPercent    Decimal   @default(0) @db.Decimal(5, 2)
+  expiryDays          Int?
+  minLoadAmount       Decimal?  @db.Decimal(18, 2)
+  maxLoadAmount       Decimal?  @db.Decimal(18, 2)
+  usageRestrictions   Json?     // category codes, merchant types, etc.
+  startsAt            DateTime?
+  endsAt              DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  program             Program     @relation(fields: [programId], references: [id], onDelete: Cascade)
+  giftCards           GiftCard[]
+  orders              Order[]
+
+  @@index([programId])
+  @@index([isActive])
+}
+
+model VelocityRule {
+  id            String    @id @default(cuid())
+  programId     String
+  name          String
+  windowSeconds Int       // e.g. 3600 = 1 hour
+  maxAmount     Decimal?  @db.Decimal(18, 2)
+  maxCount      Int?
+  scope         String    @default("card") // 'card' | 'program' | 'email'
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  program       Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@index([programId])
+  @@index([isActive])
+}
+
+model FraudFlag {
+  id            String        @id @default(cuid())
+  cardId        String
+  reason        String
+  severity      FraudSeverity @default(MEDIUM)
+  details       Json?
+  resolvedAt    DateTime?
+  resolvedBy    String?
+  resolution    String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  card          GiftCard      @relation(fields: [cardId], references: [id])
+
+  @@index([cardId])
+  @@index([severity])
+  @@index([resolvedAt])
+  @@index([createdAt])
+}
+
+model WebhookEndpoint {
+  id            String    @id @default(cuid())
+  programId     String
+  url           String
+  secretHash    String    // HMAC signing secret, hashed
+  events        WebhookEvent[]
+  isActive      Boolean   @default(true)
+  description   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  program       Program             @relation(fields: [programId], references: [id], onDelete: Cascade)
+  deliveries    WebhookDelivery[]
+
+  @@index([programId])
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id              String                @id @default(cuid())
+  endpointId      String
+  cardId          String?
+  event           WebhookEvent
+  payload         Json
+  status          WebhookDeliveryStatus @default(PENDING)
+  attempts        Int                   @default(0)
+  lastAttemptAt   DateTime?
+  nextRetryAt     DateTime?
+  responseStatus  Int?
+  responseBody    String?
+  errorMessage    String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  endpoint        WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  card            GiftCard?             @relation(fields: [cardId], references: [id])
+
+  @@index([endpointId])
+  @@index([status])
+  @@index([event])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id            String    @id @default(cuid())
+  programId     String
+  name          String
+  keyHash       String    @unique
+  keyPrefix     String    // first 8 chars visible: sk_live_abcd****
+  isSandbox     Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  lastUsedAt    DateTime?
+  expiresAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  program       Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([programId])
+  @@index([isActive])
+}
+
+model AuditLog {
+  id            String      @id @default(cuid())
+  actorId       String?
+  actorEmail    String?
+  action        AuditAction
+  resourceType  String
+  resourceId    String?
+  diff          Json?       // before/after snapshot
+  ipAddress     String?
+  userAgent     String?
+  programId     String?
+  createdAt     DateTime    @default(now())
+
+  actor         User?       @relation("ActorLogs", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([resourceType, resourceId])
+  @@index([programId])
+  @@index([createdAt])
+}
