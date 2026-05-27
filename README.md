@@ -54,6 +54,7 @@ A production-grade, full-stack gift card management system built with Node.js, R
 ### 1. Clone and configure
 
 ```bash
+git clone https://github.com/miteshgala/gift-card-platform.git
 cd gift-card-platform
 cp .env.example .env
 # Edit .env with your secrets (especially JWT_SECRET, ENCRYPTION_KEY)
