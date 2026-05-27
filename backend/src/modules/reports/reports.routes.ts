@@ -6,9 +6,18 @@ import { sendSuccess } from '../../utils/response';
 import * as reportsService from './reports.service';
 import { AuthenticatedRequest } from '../../types';
 import { UserRole } from '@prisma/client';
+import { getRates, getSupportedCurrencies } from '../../utils/fx';
 
 const router = Router();
-router.use(authenticate, requireFinance);
+
+// ─── FX Rates (public-ish — authenticated but no finance role required) ───────
+router.get('/fx/rates', authenticate, async (_req, res) => {
+  const rates = await getRates();
+  const currencies = await getSupportedCurrencies();
+  sendSuccess(res, { ...rates, supportedCurrencies: currencies });
+});
+
+router.use(requireFinance);
 
 const dateRangeSchema = z.object({
   programId: z.string().cuid().optional(),
@@ -75,6 +84,14 @@ router.get('/transaction-volume', validate(dateRangeSchema, 'query'), async (req
   injectProgramId(req, filters);
   const data = await reportsService.getTransactionVolume(filters);
   await sendReport(res as never, filters.format, 'Transaction Volume', data as Record<string, unknown>);
+});
+
+// ─── Analytics Dashboard ──────────────────────────────────────────────────────
+router.get('/analytics', validate(z.object({ programId: z.string().cuid().optional() }), 'query'), async (req: AuthenticatedRequest, res) => {
+  const filters = req.query as { programId?: string };
+  injectProgramId(req, filters);
+  const data = await reportsService.getAnalyticsDashboard(filters.programId);
+  sendSuccess(res, data);
 });
 
 // ─── Escheatment ──────────────────────────────────────────────────────────────

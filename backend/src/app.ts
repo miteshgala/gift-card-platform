@@ -24,6 +24,8 @@ import programsRoutes from './modules/programs/programs.routes';
 import webhooksRoutes from './modules/webhooks/webhooks.routes';
 import reportsRoutes from './modules/reports/reports.routes';
 import usersRoutes from './modules/users/users.routes';
+import kycRoutes from './modules/kyc/kyc.routes';
+import hrRoutes from './modules/integrations/hr.routes';
 
 const app = express();
 
@@ -86,6 +88,8 @@ app.use('/api/v1/fraud', fraudRoutes);
 app.use('/api/v1/orders', ordersRoutes);
 app.use('/api/v1/programs', programsRoutes);
 app.use('/api/v1/integrations', webhooksRoutes);
+app.use('/api/v1/integrations', hrRoutes);
+app.use('/api/v1/kyc', kycRoutes);
 app.use('/api/v1/reports', reportsRoutes);
 app.use('/api/v1/users', usersRoutes);
 

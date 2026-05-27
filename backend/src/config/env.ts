@@ -52,6 +52,12 @@ const envSchema = z.object({
   // API Keys
   SANDBOX_KEY_PREFIX: z.string().default('sk_test_'),
   LIVE_KEY_PREFIX: z.string().default('sk_live_'),
+
+  // KYC/KYB — cards with initialBalance >= this value are held PENDING until verified
+  KYC_THRESHOLD: z.coerce.number().default(1000),
+
+  // KYC webhook secret (optional — omit in dev to skip HMAC verification)
+  KYC_WEBHOOK_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

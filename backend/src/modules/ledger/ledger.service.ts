@@ -4,6 +4,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { buildMeta, getPrismaSkip } from '../../utils/pagination';
 import { dispatchWebhook } from '../webhooks/webhooks.service';
 import { WebhookEvent } from '@prisma/client';
+import { convertAmount } from '../../utils/fx';
 
 // ─── MCC restriction types ────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ export interface LoadInput {
   actorId?: string;
   ipAddress?: string;
   location?: string;
+  fundingCurrency?: string;  // if different from card currency, FX conversion is applied
   metadata?: Record<string, unknown>;
 }
 
@@ -81,7 +83,21 @@ export async function loadCard(input: LoadInput) {
       throw new AppError(410, 'CARD_EXPIRED', 'Card has expired');
     }
 
-    const amount = new Prisma.Decimal(input.amount);
+    // ─── FX conversion ────────────────────────────────────────────────────────
+    let creditAmount = input.amount;
+    let fxMeta: Record<string, unknown> = {};
+    if (input.fundingCurrency && input.fundingCurrency.toUpperCase() !== card.currency.toUpperCase()) {
+      const fx = await convertAmount(input.amount, input.fundingCurrency, card.currency);
+      fxMeta = {
+        fundingCurrency: input.fundingCurrency,
+        fundingAmount: input.amount,
+        fxRate: fx.rate,
+        fxSource: fx.source,
+      };
+      creditAmount = fx.convertedAmount;
+    }
+
+    const amount = new Prisma.Decimal(creditAmount);
     const balanceBefore = card.currentBalance;
     const balanceAfter = balanceBefore.add(amount);
 
@@ -98,7 +114,7 @@ export async function loadCard(input: LoadInput) {
           description: input.description ?? 'Card load',
           ipAddress: input.ipAddress,
           location: input.location,
-          metadata: input.metadata as Prisma.InputJsonValue,
+          metadata: { ...(input.metadata ?? {}), ...fxMeta } as Prisma.InputJsonValue,
         },
       }),
       tx.giftCard.update({

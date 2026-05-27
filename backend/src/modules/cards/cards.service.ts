@@ -38,6 +38,9 @@ export async function issueCard(input: IssueCardInput) {
   const expiryDays = input.expiryDays ?? env.DEFAULT_CARD_EXPIRY_DAYS;
   const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000);
 
+  const isPhysical = input.cardType === CardType.PHYSICAL;
+  const needsKyc = !isPhysical && input.initialBalance >= env.KYC_THRESHOLD;
+
   const card = await prisma.giftCard.create({
     data: {
       programId: input.programId,
@@ -47,8 +50,8 @@ export async function issueCard(input: IssueCardInput) {
       cardNumberMasked,
       pinHash,
       cardType: input.cardType ?? CardType.DIGITAL,
-      // Physical cards start PENDING — recipient must call /activate with their PIN
-      status: (input.cardType === CardType.PHYSICAL) ? CardStatus.PENDING : CardStatus.ACTIVE,
+      // Physical cards and high-value digital cards start PENDING
+      status: (isPhysical || needsKyc) ? CardStatus.PENDING : CardStatus.ACTIVE,
       currency: input.currency ?? 'USD',
       initialBalance: new Prisma.Decimal(input.initialBalance),
       currentBalance: new Prisma.Decimal(input.initialBalance),
@@ -56,16 +59,28 @@ export async function issueCard(input: IssueCardInput) {
       recipientEmail: input.recipientEmail,
       recipientName: input.recipientName,
       expiresAt,
-      activatedAt: (input.cardType === CardType.PHYSICAL) ? null : new Date(),
+      activatedAt: (isPhysical || needsKyc) ? null : new Date(),
       metadata: input.metadata as Prisma.InputJsonValue,
     },
   });
+
+  // Create KYC check record for high-value digital cards
+  if (needsKyc) {
+    await prisma.kycCheck.create({
+      data: {
+        cardId: card.id,
+        recipientEmail: input.recipientEmail,
+        amount: new Prisma.Decimal(input.initialBalance),
+      },
+    });
+  }
 
   // Return the plaintext card number and PIN ONCE — never stored in plaintext
   return {
     card,
     cardNumber, // plaintext, return to caller
     pin,         // plaintext, return to caller
+    kycRequired: needsKyc,
   };
 }
 

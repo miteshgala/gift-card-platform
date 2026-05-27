@@ -193,6 +193,143 @@ export async function getEscheatmentReport(dormantDays: number, programId?: stri
   };
 }
 
+// ─── Advanced Analytics Dashboard ────────────────────────────────────────────
+
+export async function getAnalyticsDashboard(programId?: string) {
+  const now = new Date();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const cardWhere = programId ? { programId } : {};
+  const ledgerCardWhere = programId ? { card: { programId } } : {};
+
+  // ── Today's snapshot ───────────────────────────────────────────────────────
+  const [
+    cardsIssuedToday,
+    redemptionsToday,
+    loadVolumeToday,
+    redeemVolumeToday,
+    pendingKyc,
+    activeLiability,
+    totalCards,
+  ] = await Promise.all([
+    prisma.giftCard.count({
+      where: { ...cardWhere, createdAt: { gte: todayStart } },
+    }),
+    prisma.ledgerEntry.count({
+      where: { ...ledgerCardWhere, type: LedgerEntryType.REDEEM, createdAt: { gte: todayStart } },
+    }),
+    prisma.ledgerEntry.aggregate({
+      where: { ...ledgerCardWhere, type: LedgerEntryType.LOAD, createdAt: { gte: todayStart } },
+      _sum: { amount: true },
+    }),
+    prisma.ledgerEntry.aggregate({
+      where: { ...ledgerCardWhere, type: LedgerEntryType.REDEEM, createdAt: { gte: todayStart } },
+      _sum: { amount: true },
+    }),
+    prisma.kycCheck.count({ where: { status: 'PENDING' } }),
+    prisma.giftCard.aggregate({
+      where: { ...cardWhere, status: { in: [CardStatus.ACTIVE, CardStatus.FROZEN] } },
+      _sum: { currentBalance: true },
+      _count: { id: true },
+    }),
+    prisma.giftCard.count({ where: cardWhere }),
+  ]);
+
+  // ── 30-day daily volume series ─────────────────────────────────────────────
+  // Group ledger entries by day using raw query for cross-db compatibility
+  const dailySeries = await prisma.$queryRawUnsafe<
+    Array<{ day: string; type: string; total: number; count: number }>
+  >(`
+    SELECT
+      DATE(le."createdAt") AS day,
+      le.type,
+      SUM(le.amount)::numeric AS total,
+      COUNT(*)::int AS count
+    FROM "LedgerEntry" le
+    ${programId ? `JOIN "GiftCard" gc ON gc.id = le."cardId" AND gc."programId" = '${programId}'` : ''}
+    WHERE le."createdAt" >= NOW() - INTERVAL '30 days'
+      AND le.type IN ('LOAD', 'REDEEM', 'REFUND')
+    GROUP BY day, le.type
+    ORDER BY day ASC
+  `);
+
+  // Build a map: day → { LOAD, REDEEM, REFUND }
+  const seriesMap: Record<string, { date: string; loads: number; redeems: number; refunds: number; netVolume: number }> = {};
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    const key = d.toISOString().slice(0, 10);
+    seriesMap[key] = { date: key, loads: 0, redeems: 0, refunds: 0, netVolume: 0 };
+  }
+  for (const row of dailySeries) {
+    const key = typeof row.day === 'string' ? row.day.slice(0, 10) : (row.day as Date).toISOString().slice(0, 10);
+    if (!seriesMap[key]) continue;
+    const amount = Number(row.total);
+    if (row.type === 'LOAD') seriesMap[key].loads = amount;
+    else if (row.type === 'REDEEM') seriesMap[key].redeems = amount;
+    else if (row.type === 'REFUND') seriesMap[key].refunds = amount;
+    seriesMap[key].netVolume = seriesMap[key].loads - seriesMap[key].redeems + seriesMap[key].refunds;
+  }
+  const volumeSeries = Object.values(seriesMap);
+
+  // ── Top 5 redemption locations ─────────────────────────────────────────────
+  const topLocationsRaw = await prisma.$queryRawUnsafe<Array<{ location: string; txCount: number; totalAmount: number }>>(
+    `
+    SELECT
+      le.location,
+      COUNT(*)::int AS "txCount",
+      SUM(le.amount)::numeric AS "totalAmount"
+    FROM "LedgerEntry" le
+    ${programId ? `JOIN "GiftCard" gc ON gc.id = le."cardId" AND gc."programId" = '${programId}'` : ''}
+    WHERE le.type = 'REDEEM'
+      AND le.location IS NOT NULL
+      AND le."createdAt" >= NOW() - INTERVAL '30 days'
+    GROUP BY le.location
+    ORDER BY "totalAmount" DESC
+    LIMIT 5
+    `
+  );
+  const topLocations = topLocationsRaw.map((r) => ({
+    location: r.location,
+    txCount: Number(r.txCount),
+    totalAmount: Number(r.totalAmount),
+  }));
+
+  // ── Card status cohort ─────────────────────────────────────────────────────
+  const statusCounts = await prisma.giftCard.groupBy({
+    by: ['status'],
+    where: cardWhere,
+    _count: { id: true },
+    _sum: { currentBalance: true },
+  });
+  const cohort = statusCounts.map((r) => ({
+    status: r.status,
+    cardCount: r._count.id,
+    totalBalance: Number(r._sum.currentBalance ?? 0),
+  }));
+
+  return {
+    asOf: now.toISOString(),
+    programId,
+    today: {
+      cardsIssued: cardsIssuedToday,
+      redemptions: redemptionsToday,
+      loadVolume: Number(loadVolumeToday._sum.amount ?? 0),
+      redeemVolume: Number(redeemVolumeToday._sum.amount ?? 0),
+    },
+    portfolio: {
+      totalCards,
+      activeCards: activeLiability._count.id,
+      outstandingLiability: Number(activeLiability._sum.currentBalance ?? 0),
+      pendingKyc,
+    },
+    volumeSeries,
+    topLocations,
+    cohort,
+  };
+}
+
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 
 export function toCSV(data: Record<string, unknown>[]): string {

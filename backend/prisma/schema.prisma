@@ -150,6 +150,7 @@ model Program {
   webhookEndpoints      WebhookEndpoint[]
   apiKeys               ApiKey[]
   departments           Department[]
+  hrIntegration         HrIntegration?
 
   @@index([slug])
   @@index([isActive])
@@ -250,6 +251,7 @@ model GiftCard {
   ledgerEntries       LedgerEntry[]
   fraudFlags          FraudFlag[]
   webhookDeliveries   WebhookDelivery[]
+  kycCheck            KycCheck?
 
   @@index([programId])
   @@index([campaignId])
@@ -460,6 +462,54 @@ model ApiKey {
   @@index([keyHash])
   @@index([programId])
   @@index([isActive])
+}
+
+// ─── HR/ERP Integration ───────────────────────────────────────────────────────
+
+model HrIntegration {
+  id                  String    @id @default(cuid())
+  programId           String    @unique
+  signingSecret       String    // HMAC-SHA256 secret for verifying inbound events
+  isActive            Boolean   @default(true)
+  // Per-event denomination config (JSON): { EMPLOYEE_ONBOARDED: 50, EMPLOYEE_BIRTHDAY: 25, ... }
+  eventDenominations  Json      @default("{}")
+  // Default campaign ID to attach issued cards to
+  defaultCampaignId   String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  program             Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@index([programId])
+}
+
+// ─── KYC/KYB Checks ──────────────────────────────────────────────────────────
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model KycCheck {
+  id              String    @id @default(cuid())
+  cardId          String    @unique
+  recipientEmail  String?
+  amount          Decimal   @db.Decimal(18, 2)
+  status          KycStatus @default(PENDING)
+  providerRef     String?   // external KYC provider reference ID
+  reviewedAt      DateTime?
+  rejectionReason String?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  card            GiftCard  @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([cardId])
+  @@index([createdAt])
 }
 
 model AuditLog {

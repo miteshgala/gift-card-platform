@@ -34,6 +34,7 @@ const loadSchema = z.object({
   description: z.string().optional(),
   referenceId: z.string().optional(),
   location: z.string().optional(),
+  fundingCurrency: z.string().length(3).optional(), // ISO 4217 — triggers FX conversion if differs from card currency
 });
 
 router.post(

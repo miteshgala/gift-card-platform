@@ -23,6 +23,7 @@ import SettingsPage from './pages/admin/SettingsPage';
 import LoginPage from './pages/LoginPage';
 import BalanceCheckPage from './pages/customer/BalanceCheckPage';
 import RegisterCardPage from './pages/customer/RegisterCardPage';
+import TransactionHistoryPage from './pages/customer/TransactionHistoryPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -50,6 +51,7 @@ function App() {
       {/* Customer self-service */}
       <Route element={<PublicLayout />}>
         <Route path="/balance" element={<BalanceCheckPage />} />
+        <Route path="/history" element={<TransactionHistoryPage />} />
         <Route path="/register-card" element={<RegisterCardPage />} />
       </Route>
 
