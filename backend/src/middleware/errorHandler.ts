@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
 import { logger } from '../config/logger';
 import { sendError } from '../utils/response';
+import { captureException } from '../config/sentry';
 
 export class AppError extends Error {
   constructor(
@@ -54,7 +55,7 @@ export function errorHandler(
     }
   }
 
-  // Unknown errors
+  // Unknown errors — report to Sentry and log locally
   const message = err instanceof Error ? err.message : 'Internal server error';
   logger.error('Unhandled error', {
     error: message,
@@ -62,6 +63,7 @@ export function errorHandler(
     path: req.path,
     method: req.method,
   });
+  captureException(err, { path: req.path, method: req.method });
 
   sendError(res, 500, 'INTERNAL_ERROR', 'An unexpected error occurred');
 }

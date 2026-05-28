@@ -1,5 +1,5 @@
 import 'express-async-errors';
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
@@ -12,6 +12,9 @@ import { logger } from './config/logger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { apiRateLimiter } from './middleware/rateLimiter';
 import { resolveSandboxMode } from './middleware/sandbox';
+import { register, httpRequestDuration, httpRequestTotal } from './config/metrics';
+import { prisma } from './config/prisma';
+import { redis } from './config/redis';
 
 // Route modules
 import authRoutes from './modules/auth/auth.routes';
@@ -33,7 +36,7 @@ const app = express();
 app.use(helmet());
 app.use(cors({
   origin: env.NODE_ENV === 'production'
-    ? process.env.ALLOWED_ORIGINS?.split(',') ?? []
+    ? process.env['ALLOWED_ORIGINS']?.split(',') ?? []
     : '*',
   credentials: true,
 }));
@@ -44,15 +47,72 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined', { stream: { write: (msg) => logger.http(msg.trim()) } }));
 
+// ─── Prometheus HTTP instrumentation ─────────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    // Normalise route (strip IDs to reduce cardinality)
+    const route = req.route?.path ?? req.path.replace(/\/[0-9a-f-]{8,}/gi, '/:id');
+    const labels = { method: req.method, route, status_code: String(res.statusCode) };
+    httpRequestDuration.observe(labels, (Date.now() - start) / 1000);
+    httpRequestTotal.inc(labels);
+  });
+  next();
+});
+
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 app.use('/api/', apiRateLimiter);
 
 // ─── Sandbox / API Key Resolution ────────────────────────────────────────────
 app.use('/api/v1/', resolveSandboxMode);
 
-// ─── Health Check ─────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
+// ─── Health Checks ────────────────────────────────────────────────────────────
+// /health/live  — liveness probe (process is up)
+app.get('/health/live', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// /health/ready — readiness probe (DB + Redis connected)
+app.get('/health/ready', async (_req, res) => {
+  const checks: Record<string, 'ok' | 'error'> = {};
+  let allOk = true;
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks['database'] = 'ok';
+  } catch {
+    checks['database'] = 'error';
+    allOk = false;
+  }
+
+  try {
+    await redis.ping();
+    checks['redis'] = 'ok';
+  } catch {
+    checks['redis'] = 'error';
+    allOk = false;
+  }
+
+  res.status(allOk ? 200 : 503).json({
+    status: allOk ? 'ready' : 'not_ready',
+    checks,
+    timestamp: new Date().toISOString(),
+    version: process.env['npm_package_version'] ?? '1.0.0',
+  });
+});
+
+// Legacy alias
+app.get('/health', (_req, res) => res.redirect('/health/ready'));
+
+// ─── Prometheus Metrics ───────────────────────────────────────────────────────
+// Restricted to internal network in production (not behind rate limiter)
+app.get('/metrics', async (_req, res) => {
+  try {
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+  } catch (err) {
+    res.status(500).end(String(err));
+  }
 });
 
 // ─── OpenAPI / Swagger ────────────────────────────────────────────────────────

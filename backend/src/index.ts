@@ -1,4 +1,7 @@
-import './config/env'; // validate env first
+import './config/env'; // validate env first — must be before everything
+import { initSentry } from './config/sentry';
+initSentry(); // initialise before anything else so startup errors are captured
+
 import { connectDB, disconnectDB } from './config/prisma';
 import { connectRedis, redis } from './config/redis';
 import { logger } from './config/logger';
