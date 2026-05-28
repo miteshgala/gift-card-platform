@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+/** Match AppError by its machine-readable code field */
+const codeOf = async (fn: () => Promise<unknown>) => {
+  try { await fn(); } catch (e: unknown) { return (e as { code?: string }).code; }
+};
 import { FraudSeverity } from '@prisma/client';
 
 vi.mock('../config/prisma', () => ({
@@ -183,17 +188,17 @@ describe('Fraud Service', () => {
       expect(result.resolvedAt).toBeDefined();
     });
 
-    it('throws NOT_FOUND for missing flag', async () => {
+    it('throws FLAG_NOT_FOUND for missing flag', async () => {
       (prisma.fraudFlag.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-      await expect(fraudService.resolveFraudFlag('bad-id', 'reason', 'user-1')).rejects.toThrow('FLAG_NOT_FOUND');
+      expect(await codeOf(() => fraudService.resolveFraudFlag('bad-id', 'reason', 'user-1'))).toBe('FLAG_NOT_FOUND');
     });
 
-    it('throws ALREADY_RESOLVED for resolved flag', async () => {
+    it('throws ALREADY_RESOLVED for an already-resolved flag', async () => {
       (prisma.fraudFlag.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'flag-1',
         resolvedAt: new Date(),
       });
-      await expect(fraudService.resolveFraudFlag('flag-1', 'reason', 'user-1')).rejects.toThrow('ALREADY_RESOLVED');
+      expect(await codeOf(() => fraudService.resolveFraudFlag('flag-1', 'reason', 'user-1'))).toBe('ALREADY_RESOLVED');
     });
   });
 });
