@@ -2,6 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, CreditCard, ShoppingCart, BarChart3,
   Users, Shield, Building2, Settings, LogOut, Bell, Gift,
+  ShieldCheck, Webhook,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useLogout } from '../../hooks/useAuth';
@@ -14,6 +15,8 @@ const navItems = [
   { to: '/admin/fraud', label: 'Fraud', icon: Shield },
   { to: '/admin/users', label: 'Users', icon: Users },
   { to: '/admin/programs', label: 'Programs', icon: Building2 },
+  { to: '/admin/kyc', label: 'KYC Queue', icon: ShieldCheck },
+  { to: '/admin/webhooks', label: 'Webhooks', icon: Webhook },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 

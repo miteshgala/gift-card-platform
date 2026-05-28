@@ -18,6 +18,8 @@ import UsersPage from './pages/admin/UsersPage';
 import FraudPage from './pages/admin/FraudPage';
 import ProgramsPage from './pages/admin/ProgramsPage';
 import SettingsPage from './pages/admin/SettingsPage';
+import KycPage from './pages/admin/KycPage';
+import WebhooksPage from './pages/admin/WebhooksPage';
 
 // Public / Customer pages
 import LoginPage from './pages/LoginPage';
@@ -72,6 +74,8 @@ function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="fraud" element={<FraudPage />} />
         <Route path="programs" element={<ProgramsPage />} />
+        <Route path="kyc" element={<KycPage />} />
+        <Route path="webhooks" element={<WebhooksPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
 

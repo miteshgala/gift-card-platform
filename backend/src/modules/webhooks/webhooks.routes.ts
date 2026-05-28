@@ -36,6 +36,31 @@ router.delete('/endpoints/:endpointId', async (req: AuthenticatedRequest, res) =
   sendSuccess(res, { deleted: true });
 });
 
+router.get('/endpoints/:endpointId/deliveries', async (req: AuthenticatedRequest, res) => {
+  const page = Math.max(1, Number(req.query['page'] ?? 1));
+  const limit = Math.min(100, Math.max(1, Number(req.query['limit'] ?? 20)));
+  const skip = (page - 1) * limit;
+
+  const { prisma } = await import('../../config/prisma');
+  const [deliveries, total] = await Promise.all([
+    prisma.webhookDelivery.findMany({
+      where: { endpointId: req.params.endpointId },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+      select: {
+        id: true, event: true, status: true, attempts: true,
+        responseStatus: true, errorMessage: true, lastAttemptAt: true, createdAt: true,
+      },
+    }),
+    prisma.webhookDelivery.count({ where: { endpointId: req.params.endpointId } }),
+  ]);
+  sendSuccess(res, deliveries, 200, {
+    total, page, limit, totalPages: Math.ceil(total / limit),
+    hasNext: page * limit < total, hasPrev: page > 1,
+  });
+});
+
 // ─── API Keys ─────────────────────────────────────────────────────────────────
 const createKeySchema = z.object({
   programId: z.string().cuid(),
