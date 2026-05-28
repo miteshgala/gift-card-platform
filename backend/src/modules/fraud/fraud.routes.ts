@@ -22,7 +22,7 @@ const listFlagsSchema = z.object({
 });
 
 router.get('/flags', requireSupport, validate(listFlagsSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as z.infer<typeof listFlagsSchema>;
+  const filters = req.query as unknown as z.infer<typeof listFlagsSchema>;
   if (req.user?.role !== UserRole.SUPER_ADMIN && req.user?.programId) {
     filters.programId = req.user.programId;
   }

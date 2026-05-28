@@ -11,3 +11,14 @@ export type PaginationInput = z.infer<typeof paginationSchema>;
 export function getPrismaSkip(page: number, limit: number): number {
   return (page - 1) * limit;
 }
+
+export function buildMeta(total: number, page: number, limit: number) {
+  return {
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+    hasNext: page * limit < total,
+    hasPrev: page > 1,
+  };
+}

@@ -87,7 +87,7 @@ const listSchema = z.object({
 });
 
 router.get('/', validate(listSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as z.infer<typeof listSchema>;
+  const filters = req.query as unknown as z.infer<typeof listSchema>;
   if (req.user?.role !== UserRole.SUPER_ADMIN && req.user?.programId) {
     filters.programId = req.user.programId;
   }

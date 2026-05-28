@@ -160,7 +160,7 @@ const historySchema = z.object({
 });
 
 router.get('/cards/:cardId/transactions', validate(historySchema, 'query'), async (req, res) => {
-  const result = await ledgerService.getTransactionHistory(req.params.cardId, req.query as z.infer<typeof historySchema>);
+  const result = await ledgerService.getTransactionHistory(req.params.cardId, req.query as unknown as z.infer<typeof historySchema>);
   sendSuccess(res, result.entries, 200, result.meta);
 });
 

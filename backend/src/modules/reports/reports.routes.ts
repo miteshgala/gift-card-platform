@@ -56,7 +56,7 @@ async function sendReport(
 
 // ─── Liability ─────────────────────────────────────────────────────────────────
 router.get('/liability', validate(z.object({ programId: z.string().cuid().optional(), format: z.enum(['json', 'csv', 'pdf']).default('json') }), 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as { programId?: string; format: string };
+  const filters = req.query as unknown as { programId?: string; format: string };
   injectProgramId(req, filters);
   const data = await reportsService.getOutstandingLiability(filters.programId);
   await sendReport(res as never, filters.format, 'Outstanding Liability', data as Record<string, unknown>);
@@ -64,7 +64,7 @@ router.get('/liability', validate(z.object({ programId: z.string().cuid().option
 
 // ─── Breakage ─────────────────────────────────────────────────────────────────
 router.get('/breakage', validate(dateRangeSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as z.infer<typeof dateRangeSchema>;
+  const filters = req.query as unknown as z.infer<typeof dateRangeSchema>;
   injectProgramId(req, filters);
   const data = await reportsService.getBreakageReport(filters);
   await sendReport(res as never, filters.format, 'Breakage Report', data as Record<string, unknown>);
@@ -72,7 +72,7 @@ router.get('/breakage', validate(dateRangeSchema, 'query'), async (req: Authenti
 
 // ─── Redemption Rate ───────────────────────────────────────────────────────────
 router.get('/redemption-rate', validate(dateRangeSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as z.infer<typeof dateRangeSchema>;
+  const filters = req.query as unknown as z.infer<typeof dateRangeSchema>;
   injectProgramId(req, filters);
   const data = await reportsService.getRedemptionRate(filters);
   await sendReport(res as never, filters.format, 'Redemption Rate', data as Record<string, unknown>);
@@ -80,7 +80,7 @@ router.get('/redemption-rate', validate(dateRangeSchema, 'query'), async (req: A
 
 // ─── Transaction Volume ────────────────────────────────────────────────────────
 router.get('/transaction-volume', validate(dateRangeSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as z.infer<typeof dateRangeSchema>;
+  const filters = req.query as unknown as z.infer<typeof dateRangeSchema>;
   injectProgramId(req, filters);
   const data = await reportsService.getTransactionVolume(filters);
   await sendReport(res as never, filters.format, 'Transaction Volume', data as Record<string, unknown>);
@@ -88,7 +88,7 @@ router.get('/transaction-volume', validate(dateRangeSchema, 'query'), async (req
 
 // ─── Analytics Dashboard ──────────────────────────────────────────────────────
 router.get('/analytics', validate(z.object({ programId: z.string().cuid().optional() }), 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as { programId?: string };
+  const filters = req.query as unknown as { programId?: string };
   injectProgramId(req, filters);
   const data = await reportsService.getAnalyticsDashboard(filters.programId);
   sendSuccess(res, data);
@@ -102,7 +102,7 @@ const escheatSchema = z.object({
 });
 
 router.get('/escheatment', validate(escheatSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const filters = req.query as z.infer<typeof escheatSchema>;
+  const filters = req.query as unknown as z.infer<typeof escheatSchema>;
   injectProgramId(req, filters);
   const data = await reportsService.getEscheatmentReport(filters.dormantDays, filters.programId);
   await sendReport(res as never, filters.format, 'Escheatment Report', data.cards as Record<string, unknown>[]);

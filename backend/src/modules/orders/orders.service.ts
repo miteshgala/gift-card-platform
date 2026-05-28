@@ -158,11 +158,13 @@ export async function dispatchOrder(orderId: string) {
   });
   if (!order) throw new AppError(404, 'ORDER_NOT_FOUND', 'Order not found');
 
-  const recipients = order.orderItems.map((item) => ({
-    email: item.recipientEmail ?? undefined,
-    name: item.recipientName ?? undefined,
-    denomination: Number(item.denomination),
-  }));
+  const recipients = order.orderItems
+    .filter((item) => item.recipientEmail != null)
+    .map((item) => ({
+      email: item.recipientEmail as string,
+      name: item.recipientName ?? undefined,
+      denomination: Number(item.denomination),
+    }));
 
   const job = await issuanceQueue.add({
     orderId: order.id,

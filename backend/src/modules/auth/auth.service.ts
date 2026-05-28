@@ -22,7 +22,7 @@ function signAccessToken(user: User): string {
     role: user.role,
     programId: user.programId ?? undefined,
   };
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN });
+  return jwt.sign(payload as object, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as never });
 }
 
 function signRefreshToken(): string {

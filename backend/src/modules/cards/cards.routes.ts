@@ -49,7 +49,7 @@ router.get(
   '/',
   validate(listSchema, 'query'),
   async (req: AuthenticatedRequest, res) => {
-    const filters = req.query as z.infer<typeof listSchema>;
+    const filters = req.query as unknown as z.infer<typeof listSchema>;
     // Non-super-admins can only see their program's cards
     if (req.user?.role !== UserRole.SUPER_ADMIN && req.user?.programId) {
       filters.programId = req.user.programId;

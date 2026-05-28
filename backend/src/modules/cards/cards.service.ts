@@ -203,7 +203,7 @@ export async function freezeCard(cardId: string, reason: string, actorId: string
   const card = await prisma.giftCard.findUnique({ where: { id: cardId } });
   if (!card) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
   if (card.status === CardStatus.FROZEN) throw new AppError(409, 'ALREADY_FROZEN', 'Card is already frozen');
-  if ([CardStatus.REDEEMED, CardStatus.CANCELLED, CardStatus.EXPIRED].includes(card.status)) {
+  if (([CardStatus.REDEEMED, CardStatus.CANCELLED, CardStatus.EXPIRED] as CardStatus[]).includes(card.status)) {
     throw new AppError(400, 'INVALID_STATUS', `Cannot freeze a ${card.status} card`);
   }
 
@@ -313,7 +313,7 @@ export async function activateCard(cardId: string, pin: string, actorId: string)
 export async function reissueCard(cardId: string, reason: string, actorId: string) {
   const old = await prisma.giftCard.findUnique({ where: { id: cardId } });
   if (!old) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
-  if ([CardStatus.CANCELLED, CardStatus.REDEEMED].includes(old.status)) {
+  if (([CardStatus.CANCELLED, CardStatus.REDEEMED] as CardStatus[]).includes(old.status)) {
     throw new AppError(400, 'INVALID_STATUS', `Cannot reissue a ${old.status} card`);
   }
 
@@ -364,7 +364,7 @@ export async function reissueCard(cardId: string, reason: string, actorId: strin
         recipientName: old.recipientName,
         expiresAt,
         activatedAt: old.cardType === CardType.PHYSICAL ? null : new Date(),
-        metadata: old.metadata,
+        metadata: old.metadata as Prisma.InputJsonValue ?? Prisma.JsonNull,
       },
     });
 
@@ -417,7 +417,7 @@ export async function reissueCard(cardId: string, reason: string, actorId: strin
 export async function cancelCard(cardId: string, reason: string, actorId: string) {
   const card = await prisma.giftCard.findUnique({ where: { id: cardId } });
   if (!card) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
-  if ([CardStatus.CANCELLED, CardStatus.REDEEMED].includes(card.status)) {
+  if (([CardStatus.CANCELLED, CardStatus.REDEEMED] as CardStatus[]).includes(card.status)) {
     throw new AppError(400, 'INVALID_STATUS', `Cannot cancel a ${card.status} card`);
   }
 

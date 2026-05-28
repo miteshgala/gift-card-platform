@@ -76,7 +76,7 @@ export async function loadCard(input: LoadInput) {
     if (!card) throw new AppError(404, 'CARD_NOT_FOUND', 'Card not found');
 
     // Check expiry (allow loading PENDING or ACTIVE cards)
-    if ([CardStatus.FROZEN, CardStatus.CANCELLED, CardStatus.REDEEMED].includes(card.status)) {
+    if (([CardStatus.FROZEN, CardStatus.CANCELLED, CardStatus.REDEEMED] as CardStatus[]).includes(card.status)) {
       assertCardActive(card.status);
     }
     if (card.expiresAt && card.expiresAt < new Date()) {

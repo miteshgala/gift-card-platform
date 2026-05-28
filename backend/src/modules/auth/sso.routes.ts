@@ -71,7 +71,7 @@ async function getOidcConfig(program: {
 // ─── GET /begin ───────────────────────────────────────────────────────────────
 
 router.get('/begin', async (req: Request, res: Response) => {
-  const { programSlug } = req.query as { programSlug?: string };
+  const { programSlug } = req.query as unknown as { programSlug?: string };
   if (!programSlug) throw new AppError(400, 'MISSING_PARAM', 'programSlug is required');
 
   const program = await prisma.program.findUnique({

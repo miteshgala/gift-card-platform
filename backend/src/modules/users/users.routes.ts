@@ -22,7 +22,7 @@ const listSchema = z.object({
 });
 
 router.get('/', requireMinRole(UserRole.PROGRAM_ADMIN), validate(listSchema, 'query'), async (req: AuthenticatedRequest, res) => {
-  const q = req.query as z.infer<typeof listSchema>;
+  const q = req.query as unknown as z.infer<typeof listSchema>;
   const page = q.page ?? 1;
   const limit = q.limit ?? 20;
 
