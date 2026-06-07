@@ -33,11 +33,15 @@ jobs:
 
       - name: Generate Prisma client
         working-directory: services/api
-        run: npx prisma generate
+        run: npx prisma generate --schema src/prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost/ci
 
       - name: Validate Prisma schema
         working-directory: services/api
-        run: npx prisma validate
+        run: npx prisma validate --schema src/prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost/ci
 
       - name: TypeScript typecheck
         working-directory: services/api
@@ -80,10 +84,14 @@ jobs:
       - name: Generate API Prisma client (needed for workspace types)
         working-directory: services/api
         run: npx prisma generate --schema src/prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost/ci
 
       - name: Generate Prisma client (vault DB)
         working-directory: services/vault
         run: npx prisma generate --schema src/schema.prisma
+        env:
+          VAULT_DATABASE_URL: postgresql://ci:ci@localhost/ci_vault
 
       - name: TypeScript typecheck
         working-directory: services/vault
@@ -135,7 +143,9 @@ jobs:
 
       - name: Generate Prisma client (needed by worker imports)
         working-directory: services/api
-        run: npx prisma generate
+        run: npx prisma generate --schema src/prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost/ci
 
       - name: TypeScript typecheck
         working-directory: services/worker

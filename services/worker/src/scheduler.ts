@@ -27,7 +27,8 @@ const log = winston.createLogger({
 const REDIS_URL = process.env['REDIS_URL'] ?? 'redis://localhost:6379';
 const redis = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
 
-const connection = { connection: new Redis(REDIS_URL, { maxRetriesPerRequest: null }) };
+// Cast needed: BullMQ bundles its own ioredis version with incompatible but structurally equivalent types
+const connection = { connection: new Redis(REDIS_URL, { maxRetriesPerRequest: null }) as never };
 
 // ─── Queue definitions ────────────────────────────────────────────────────────
 
