@@ -1,0 +1,927 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS (using string fields + CHECK constraints in migrations) ─────────────
+// We do NOT use Prisma enums — they map to PostgreSQL ENUMs which are painful
+// to ALTER. Instead we use String with validation in the application layer.
+
+// ─── SETTLEMENT PARTIES ───────────────────────────────────────────────────────
+model SettlementParty {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyType           String    @map("party_type") // FRANCHISEE | COALITION_BRAND | MARKETPLACE_SELLER | DISTRIBUTOR | WHITE_LABEL_CLIENT | PROGRAM_OWNER
+  name                String
+  legalName           String    @map("legal_name")
+  taxId               String?   @map("tax_id") // AES-256-GCM encrypted
+  settlementCurrency  String    @default("USD") @map("settlement_currency") @db.Char(3)
+  settlementFrequency String    @default("WEEKLY") @map("settlement_frequency")
+  bankAccountToken    String?   @map("bank_account_token")
+  floatAccountId      String?   @unique @map("float_account_id") @db.Uuid
+  suspenseAccountId   String?   @unique @map("suspense_account_id") @db.Uuid
+  status              String    @default("ACTIVE")
+  parentPartyId       String?   @map("parent_party_id") @db.Uuid
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  parent              SettlementParty?  @relation("PartyHierarchy", fields: [parentPartyId], references: [id])
+  children            SettlementParty[] @relation("PartyHierarchy")
+  floatAccount        Account?          @relation("PartyFloat", fields: [floatAccountId], references: [id])
+  suspenseAccount     Account?          @relation("PartySuspense", fields: [suspenseAccountId], references: [id])
+  programs            Program[]
+  settlementRuns      SettlementRun[]
+  redemptionLinks     RedemptionPartyLink[]
+
+  @@map("settlement_parties")
+}
+
+// ─── PROGRAMS ─────────────────────────────────────────────────────────────────
+model Program {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug               String   @unique
+  name               String
+  description        String?
+  currency           String   @default("USD") @db.Char(3)
+  openLoop           Boolean  @default(false) @map("open_loop")
+  cardExpiryDays     Int      @default(1825) @map("card_expiry_days")
+  dormancyFeeCents   BigInt   @default(0) @map("dormancy_fee_cents")
+  dormancyMonths     Int      @default(12) @map("dormancy_months")
+  budgetCap          BigInt?  @map("budget_cap")
+  approvalThreshold  BigInt   @default(500000) @map("approval_threshold")
+  autoApproveLimit   BigInt   @default(100000) @map("auto_approve_limit")
+  kycRequiredAbove   BigInt?  @map("kyc_required_above")
+  status             String   @default("ACTIVE")
+  floatAccountId     String?  @unique @map("float_account_id") @db.Uuid
+  liabilityAccountId String?  @unique @map("liability_account_id") @db.Uuid
+  breakageAccountId  String?  @unique @map("breakage_account_id") @db.Uuid
+  feeAccountId       String?  @unique @map("fee_account_id") @db.Uuid
+  escrowAccountId    String?  @unique @map("escrow_account_id") @db.Uuid
+  ownerPartyId       String?  @map("owner_party_id") @db.Uuid
+  metadata           Json     @default("{}")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  floatAccount       Account?        @relation("ProgramFloat", fields: [floatAccountId], references: [id])
+  liabilityAccount   Account?        @relation("ProgramLiability", fields: [liabilityAccountId], references: [id])
+  breakageAccount    Account?        @relation("ProgramBreakage", fields: [breakageAccountId], references: [id])
+  feeAccount         Account?        @relation("ProgramFee", fields: [feeAccountId], references: [id])
+  escrowAccount      Account?        @relation("ProgramEscrow", fields: [escrowAccountId], references: [id])
+  ownerParty         SettlementParty? @relation(fields: [ownerPartyId], references: [id])
+  accounts           Account[]       @relation("ProgramAccounts")
+  cards              Card[]
+  campaigns          Campaign[]
+  departments        Department[]
+  orders             Order[]
+  journalEntries     JournalEntry[]
+  users              User[]
+  velocityRules      VelocityRule[]
+  fraudFlags         FraudFlag[]
+  kycChecks          KycCheck[]
+  sarFilings         SarFiling[]
+  settlementRuns     SettlementRun[]
+  glMappings         GlMapping[]
+  hrEventRules       HrEventRule[]
+  apiKeys            ApiKey[]
+  reconLogs          ReconciliationLog[]
+  dormancyAssessments DormancyAssessment[]
+  escheatmentRecords  EscheatmentRecord[]
+  escheatmentFilings  EscheatmentFiling[]
+
+  @@map("programs")
+}
+
+// ─── ACCOUNTS ─────────────────────────────────────────────────────────────────
+model Account {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountType   String    @map("account_type") // CARD | FLOAT | LIABILITY_RESERVE | BREAKAGE | FEE_INCOME | ESCROW | SETTLEMENT_SUSPENSE | AUTH_HOLD
+  normalBalance String    @map("normal_balance") // DEBIT | CREDIT
+  currency      String    @db.Char(3)
+  programId     String?   @map("program_id") @db.Uuid
+  cardId        String?   @map("card_id") @db.Uuid
+  partyId       String?   @map("party_id") @db.Uuid
+  label         String
+  status        String    @default("ACTIVE")
+  metadata      Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  closedAt      DateTime? @map("closed_at")
+
+  program       Program?         @relation("ProgramAccounts", fields: [programId], references: [id])
+  card          Card?
+  journalLines  JournalLine[]
+  checkpoints   BalanceCheckpoint[]
+
+  // Named relations for program account FKs
+  programFloat      Program? @relation("ProgramFloat")
+  programLiability  Program? @relation("ProgramLiability")
+  programBreakage   Program? @relation("ProgramBreakage")
+  programFee        Program? @relation("ProgramFee")
+  programEscrow     Program? @relation("ProgramEscrow")
+  partyFloat        SettlementParty? @relation("PartyFloat")
+  partySuspense     SettlementParty? @relation("PartySuspense")
+
+  @@index([cardId])
+  @@index([programId])
+  @@index([accountType, status])
+  @@map("accounts")
+}
+
+// ─── JOURNAL ENTRIES ──────────────────────────────────────────────────────────
+model JournalEntry {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entryType       String    @map("entry_type") // LOAD | AUTH | CAPTURE | REVERSAL | VOID | REFUND | FEE | ADJUSTMENT | ESCHEAT | BREAKAGE_RECOGNITION | SETTLEMENT | RELOAD | DISPUTE_CREDIT | DISPUTE_REVERSAL
+  status          String    @default("POSTED") // PENDING | POSTED | VOIDED
+  idempotencyKey  String?   @unique @map("idempotency_key")
+  authorizationId String?   @map("authorization_id") @db.Uuid
+  orderId         String?   @map("order_id") @db.Uuid
+  programId       String    @map("program_id") @db.Uuid
+  initiatedBy     String?   @map("initiated_by") @db.Uuid
+  externalRef     String?   @map("external_ref")
+  description     String
+  metadata        Json      @default("{}")
+  postedAt        DateTime  @default(now()) @map("posted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  program         Program         @relation(fields: [programId], references: [id])
+  initiator       User?           @relation(fields: [initiatedBy], references: [id])
+  authorization   Authorization?  @relation(fields: [authorizationId], references: [id])
+  order           Order?          @relation(fields: [orderId], references: [id])
+  lines           JournalLine[]
+  checkpoints     BalanceCheckpoint[]
+  dormancyAssessments DormancyAssessment[]
+  escheatmentRecords  EscheatmentRecord[]
+  settlementRun   SettlementRun?  @relation("SettlementEntry")
+  dispute         Dispute?        @relation("DisputeCredit")
+  disputeReversal Dispute?        @relation("DisputeReversal")
+
+  @@index([programId])
+  @@index([entryType])
+  @@index([postedAt(sort: Desc)])
+  @@index([idempotencyKey])
+  @@map("journal_entries")
+}
+
+// ─── JOURNAL LINES ────────────────────────────────────────────────────────────
+model JournalLine {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entryId   String   @map("entry_id") @db.Uuid
+  accountId String   @map("account_id") @db.Uuid
+  direction String   // DEBIT | CREDIT
+  amount    BigInt
+  currency  String   @db.Char(3)
+  sequence  Int      @db.SmallInt
+  createdAt DateTime @default(now()) @map("created_at")
+
+  entry   JournalEntry @relation(fields: [entryId], references: [id])
+  account Account      @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([entryId])
+  @@index([accountId, createdAt(sort: Desc)])
+  @@map("journal_lines")
+}
+
+// ─── BALANCE CHECKPOINTS ──────────────────────────────────────────────────────
+model BalanceCheckpoint {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId    String   @map("account_id") @db.Uuid
+  balance      BigInt
+  currency     String   @db.Char(3)
+  checkpointAt DateTime @map("checkpoint_at")
+  lastEntryId  String   @map("last_entry_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  account   Account      @relation(fields: [accountId], references: [id])
+  lastEntry JournalEntry @relation(fields: [lastEntryId], references: [id])
+
+  @@unique([accountId, checkpointAt])
+  @@index([accountId, checkpointAt(sort: Desc)])
+  @@map("balance_checkpoints")
+}
+
+// ─── USERS ────────────────────────────────────────────────────────────────────
+model User {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String    @unique
+  passwordHash     String?   @map("password_hash")
+  ssoProvider      String?   @map("sso_provider")
+  ssoSubject       String?   @map("sso_subject")
+  firstName        String    @map("first_name")
+  lastName         String    @map("last_name")
+  role             String    // SUPER_ADMIN | PROGRAM_ADMIN | PROGRAM_ANALYST | SUPPORT_AGENT | AUDITOR | API_SERVICE
+  programId        String?   @map("program_id") @db.Uuid
+  status           String    @default("INVITED") // INVITED | ACTIVE | SUSPENDED | DEACTIVATED
+  emailVerified    Boolean   @default(false) @map("email_verified")
+  totpEnabled      Boolean   @default(false) @map("totp_enabled")
+  totpSecret       String?   @map("totp_secret") // AES-256-GCM encrypted
+  lastLoginAt      DateTime? @map("last_login_at")
+  lastLoginIp      String?   @map("last_login_ip")
+  failedAttempts   Int       @default(0) @map("failed_attempts") @db.SmallInt
+  lockedUntil      DateTime? @map("locked_until")
+  inviteTokenHash  String?   @map("invite_token_hash")
+  inviteExpiresAt  DateTime? @map("invite_expires_at")
+  resetTokenHash   String?   @map("reset_token_hash")
+  resetExpiresAt   DateTime? @map("reset_expires_at")
+  totpPendingSecret String?  @map("totp_pending_secret") // AES-256-GCM encrypted — before verification
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  program          Program?         @relation(fields: [programId], references: [id])
+  refreshTokens    RefreshToken[]
+  apiKeys          ApiKey[]
+  journalEntries   JournalEntry[]
+  issuedCards      Card[]           @relation("IssuedByUser")
+  auditLogs        AuditLog[]
+  resolvedFlags    FraudFlag[]      @relation("ResolvedBy")
+  reviewedKyc      KycCheck[]       @relation("ReviewedBy")
+  sarFilings       SarFiling[]
+  assignedDisputes Dispute[]        @relation("AssignedTo")
+
+  @@unique([ssoProvider, ssoSubject])
+  @@index([programId])
+  @@map("users")
+}
+
+// ─── REFRESH TOKENS ───────────────────────────────────────────────────────────
+model RefreshToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  familyId    String    @map("family_id") @db.Uuid
+  replacedBy  String?   @map("replaced_by") @db.Uuid
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+// ─── API KEYS ─────────────────────────────────────────────────────────────────
+model ApiKey {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId   String    @map("program_id") @db.Uuid
+  userId      String?   @map("user_id") @db.Uuid
+  name        String
+  keyPrefix   String    @map("key_prefix") @db.Char(12)
+  keyHash     String    @unique @map("key_hash")
+  environment String    // LIVE | TEST
+  scopes      String[]
+  lastUsedAt  DateTime? @map("last_used_at")
+  lastUsedIp  String?   @map("last_used_ip")
+  expiresAt   DateTime? @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  program     Program   @relation(fields: [programId], references: [id])
+  user        User?     @relation(fields: [userId], references: [id])
+
+  @@index([programId])
+  @@map("api_keys")
+}
+
+// ─── CAMPAIGNS ────────────────────────────────────────────────────────────────
+model Campaign {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId        String    @map("program_id") @db.Uuid
+  name             String
+  description      String?
+  bonusLoadPercent Decimal?  @map("bonus_load_percent") @db.Decimal(5, 2)
+  expiryDays       Int?      @map("expiry_days")
+  maxCards         Int?      @map("max_cards")
+  startsAt         DateTime? @map("starts_at")
+  endsAt           DateTime? @map("ends_at")
+  status           String    @default("ACTIVE")
+  metadata         Json      @default("{}")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  program          Program   @relation(fields: [programId], references: [id])
+  cards            Card[]
+  orders           Order[]
+
+  @@index([programId])
+  @@map("campaigns")
+}
+
+// ─── DEPARTMENTS ──────────────────────────────────────────────────────────────
+model Department {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId String   @map("program_id") @db.Uuid
+  name      String
+  budgetCap BigInt?  @map("budget_cap")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  program   Program  @relation(fields: [programId], references: [id])
+  cards     Card[]
+
+  @@unique([programId, name])
+  @@map("departments")
+}
+
+// ─── CARDS ────────────────────────────────────────────────────────────────────
+model Card {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId      String    @map("program_id") @db.Uuid
+  campaignId     String?   @map("campaign_id") @db.Uuid
+  accountId      String    @unique @map("account_id") @db.Uuid
+  vaultToken     String    @unique @map("vault_token")
+  last4          String    @map("last4") @db.Char(4)
+  bin            String    @map("bin") @db.VarChar(8)
+  cardType       String    @map("card_type") // PHYSICAL | VIRTUAL | SINGLE_USE
+  status         String    @default("PENDING_ACTIVATION") // PENDING_ACTIVATION | ACTIVE | SUSPENDED | EXPIRED | CANCELLED | ESHEATED
+  currency       String    @db.Char(3)
+  initialLoad    BigInt    @map("initial_load")
+  expiresAt      DateTime  @map("expires_at")
+  activatedAt    DateTime? @map("activated_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  kycStatus      String    @default("NOT_REQUIRED") @map("kyc_status") // NOT_REQUIRED | PENDING | APPROVED | REJECTED | EXPIRED
+  recipientName  String?   @map("recipient_name")
+  recipientEmail String?   @map("recipient_email")
+  recipientPhone String?   @map("recipient_phone")
+  recipientState String?   @map("recipient_state") @db.Char(2)
+  departmentId   String?   @map("department_id") @db.Uuid
+  issuedBy       String?   @map("issued_by") @db.Uuid
+  orderId        String?   @map("order_id") @db.Uuid
+  metadata       Json      @default("{}")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  program        Program          @relation(fields: [programId], references: [id])
+  campaign       Campaign?        @relation(fields: [campaignId], references: [id])
+  account        Account          @relation(fields: [accountId], references: [id])
+  department     Department?      @relation(fields: [departmentId], references: [id])
+  issuer         User?            @relation("IssuedByUser", fields: [issuedBy], references: [id])
+  order          Order?           @relation(fields: [orderId], references: [id])
+  pin            CardPin?
+  authorizations Authorization[]
+  kycChecks      KycCheck[]
+  fraudFlags     FraudFlag[]
+  walletTokens   WalletToken[]
+  pendingReloads PendingReload[]
+  disputes       Dispute[]
+  dormancyAssessments DormancyAssessment[]
+  escheatmentRecords  EscheatmentRecord[]
+  deviceFingerprints  DeviceFingerprint[]
+
+  @@index([programId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([lastUsedAt])
+  @@index([vaultToken])
+  @@index([orderId])
+  @@map("cards")
+}
+
+// ─── CARD PINS ────────────────────────────────────────────────────────────────
+model CardPin {
+  cardId        String    @id @map("card_id") @db.Uuid
+  pinHash       String    @map("pin_hash")
+  attemptCount  Int       @default(0) @map("attempt_count") @db.SmallInt
+  lockedAt      DateTime? @map("locked_at")
+  lastChangedAt DateTime  @default(now()) @map("last_changed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  card          Card      @relation(fields: [cardId], references: [id])
+
+  @@map("card_pins")
+}
+
+// ─── AUTHORIZATIONS ───────────────────────────────────────────────────────────
+model Authorization {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId           String    @map("card_id") @db.Uuid
+  accountId        String    @map("account_id") @db.Uuid
+  programId        String    @map("program_id") @db.Uuid
+  status           String    @default("PENDING") // PENDING | CAPTURED | PARTIALLY_CAPTURED | REVERSED | VOIDED | EXPIRED
+  requestedAmount  BigInt    @map("requested_amount")
+  authorizedAmount BigInt    @map("authorized_amount")
+  capturedAmount   BigInt    @default(0) @map("captured_amount")
+  reversedAmount   BigInt    @default(0) @map("reversed_amount")
+  currency         String    @db.Char(3)
+  merchantName     String?   @map("merchant_name")
+  merchantMcc      String?   @map("merchant_mcc") @db.Char(4)
+  merchantCountry  String?   @map("merchant_country") @db.Char(2)
+  posEntryMode     String?   @map("pos_entry_mode") // CHIP | SWIPE | CONTACTLESS | ECOM | MANUAL
+  retrievalRef     String?   @map("retrieval_ref")
+  authCode         String?   @map("auth_code") @db.Char(6)
+  fraudScore       Int?      @map("fraud_score") @db.SmallInt
+  fraudDecision    String?   @map("fraud_decision") // APPROVE | DECLINE | REVIEW
+  declineCode      String?   @map("decline_code")
+  idempotencyKey   String?   @unique @map("idempotency_key")
+  expiresAt        DateTime  @default(dbgenerated("(NOW() + INTERVAL '7 days')")) @map("expires_at")
+  authorizedAt     DateTime  @default(now()) @map("authorized_at")
+  capturedAt       DateTime? @map("captured_at")
+  voidedAt         DateTime? @map("voided_at")
+  metadata         Json      @default("{}")
+
+  card             Card      @relation(fields: [cardId], references: [id])
+  journalEntries   JournalEntry[]
+  settlementLines  SettlementLine[]
+  fraudFlags       FraudFlag[]
+  redemptionLinks  RedemptionPartyLink[]
+
+  @@index([cardId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("authorizations")
+}
+
+// ─── ORDERS ───────────────────────────────────────────────────────────────────
+model Order {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId         String    @map("program_id") @db.Uuid
+  campaignId        String?   @map("campaign_id") @db.Uuid
+  status            String    @default("PENDING") // PENDING | PENDING_APPROVAL | PROCESSING | COMPLETED | FAILED | CANCELLED
+  totalCards        Int       @map("total_cards")
+  processedCards    Int       @default(0) @map("processed_cards")
+  failedCards       Int       @default(0) @map("failed_cards")
+  totalAmountCents  BigInt    @map("total_amount_cents")
+  currency          String    @db.Char(3)
+  approvedBy        String?   @map("approved_by") @db.Uuid
+  approvedAt        DateTime? @map("approved_at")
+  csvS3Key          String?   @map("csv_s3_key")
+  errorMessage      String?   @map("error_message")
+  metadata          Json      @default("{}")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  program           Program      @relation(fields: [programId], references: [id])
+  campaign          Campaign?    @relation(fields: [campaignId], references: [id])
+  lineItems         OrderLineItem[]
+  cards             Card[]
+  journalEntries    JournalEntry[]
+
+  @@index([programId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderLineItem {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        String   @map("order_id") @db.Uuid
+  recipientName  String?  @map("recipient_name")
+  recipientEmail String?  @map("recipient_email")
+  recipientPhone String?  @map("recipient_phone")
+  amountCents    BigInt   @map("amount_cents")
+  cardType       String   @default("VIRTUAL") @map("card_type")
+  status         String   @default("PENDING") // PENDING | ISSUED | FAILED
+  cardId         String?  @map("card_id") @db.Uuid
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  order          Order    @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("order_line_items")
+}
+
+// ─── KYC CHECKS ───────────────────────────────────────────────────────────────
+model KycCheck {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId      String    @map("card_id") @db.Uuid
+  programId   String    @map("program_id") @db.Uuid
+  checkType   String    @map("check_type") // IDENTITY | OFAC | ENHANCED_DUE_DILIGENCE
+  provider    String    // INTERNAL | PERSONA | ALLOY | LEXISNEXIS
+  status      String    @default("PENDING") // PENDING | APPROVED | REJECTED | REQUIRES_REVIEW | EXPIRED
+  referenceId String?   @map("reference_id")
+  riskScore   Int?      @map("risk_score") @db.SmallInt
+  reasonCodes String[]  @map("reason_codes")
+  reviewedBy  String?   @map("reviewed_by") @db.Uuid
+  reviewNotes String?   @map("review_notes")
+  expiresAt   DateTime? @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  card        Card      @relation(fields: [cardId], references: [id])
+  program     Program   @relation(fields: [programId], references: [id])
+  reviewer    User?     @relation("ReviewedBy", fields: [reviewedBy], references: [id])
+
+  @@index([cardId])
+  @@index([programId, status])
+  @@map("kyc_checks")
+}
+
+// ─── SAR / CTR FILINGS ────────────────────────────────────────────────────────
+model SarFiling {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId    String    @map("program_id") @db.Uuid
+  cardId       String?   @map("card_id") @db.Uuid
+  filingType   String    @map("filing_type") // SAR | CTR
+  triggerEvent String    @map("trigger_event")
+  amount       BigInt?
+  currency     String?   @db.Char(3)
+  fincenRef    String?   @map("fincen_ref")
+  status       String    @default("DRAFT") // DRAFT | SUBMITTED | ACCEPTED
+  filedAt      DateTime? @map("filed_at")
+  createdBy    String    @map("created_by") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  program      Program   @relation(fields: [programId], references: [id])
+  creator      User      @relation(fields: [createdBy], references: [id])
+
+  @@index([programId])
+  @@map("sar_filings")
+}
+
+// ─── VELOCITY RULES ───────────────────────────────────────────────────────────
+model VelocityRule {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId     String?  @map("program_id") @db.Uuid
+  name          String
+  enabled       Boolean  @default(true)
+  scope         String   // CARD | BIN | MERCHANT | IP | DEVICE
+  windowSeconds Int      @map("window_seconds")
+  maxCount      Int?     @map("max_count")
+  maxAmount     BigInt?  @map("max_amount")
+  action        String   @default("FLAG") // FLAG | DECLINE | SUSPEND
+  priority      Int      @default(50) @db.SmallInt
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  program       Program?    @relation(fields: [programId], references: [id])
+  fraudFlags    FraudFlag[]
+
+  @@index([programId, enabled])
+  @@map("velocity_rules")
+}
+
+// ─── FRAUD FLAGS ──────────────────────────────────────────────────────────────
+model FraudFlag {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId          String?   @map("card_id") @db.Uuid
+  authorizationId String?   @map("authorization_id") @db.Uuid
+  programId       String    @map("program_id") @db.Uuid
+  source          String    // VELOCITY_RULE | ML_MODEL | MANUAL | OFAC
+  severity        String    // LOW | MEDIUM | HIGH | CRITICAL
+  ruleId          String?   @map("rule_id") @db.Uuid
+  reasonCode      String    @map("reason_code")
+  reasonText      String    @map("reason_text")
+  score           Int?      @db.SmallInt
+  status          String    @default("OPEN") // OPEN | RESOLVED | FALSE_POSITIVE
+  resolvedBy      String?   @map("resolved_by") @db.Uuid
+  resolvedAt      DateTime? @map("resolved_at")
+  resolutionNote  String?   @map("resolution_note")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  card            Card?          @relation(fields: [cardId], references: [id])
+  authorization   Authorization? @relation(fields: [authorizationId], references: [id])
+  program         Program        @relation(fields: [programId], references: [id])
+  rule            VelocityRule?  @relation(fields: [ruleId], references: [id])
+  resolver        User?          @relation("ResolvedBy", fields: [resolvedBy], references: [id])
+
+  @@index([programId, status])
+  @@index([cardId])
+  @@map("fraud_flags")
+}
+
+// ─── DEVICE FINGERPRINTS ──────────────────────────────────────────────────────
+model DeviceFingerprint {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId          String   @map("card_id") @db.Uuid
+  fingerprintHash String   @map("fingerprint_hash")
+  ipAddress       String   @map("ip_address")
+  userAgent       String?  @map("user_agent")
+  seenAt          DateTime @default(now()) @map("seen_at")
+  riskSignals     Json     @default("{}") @map("risk_signals")
+
+  card            Card     @relation(fields: [cardId], references: [id])
+
+  @@index([cardId])
+  @@index([fingerprintHash])
+  @@index([ipAddress])
+  @@map("device_fingerprints")
+}
+
+// ─── SETTLEMENT RUNS ──────────────────────────────────────────────────────────
+model SettlementRun {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId        String    @map("program_id") @db.Uuid
+  partyId          String    @map("party_id") @db.Uuid
+  periodStart      DateTime  @map("period_start")
+  periodEnd        DateTime  @map("period_end")
+  status           String    @default("PENDING") // PENDING | CALCULATING | READY | APPROVED | PAID | FAILED
+  grossRedemptions BigInt    @default(0) @map("gross_redemptions")
+  feesWithheld     BigInt    @default(0) @map("fees_withheld")
+  netPayable       BigInt    @default(0) @map("net_payable")
+  currency         String    @db.Char(3)
+  approvedBy       String?   @map("approved_by") @db.Uuid
+  approvedAt       DateTime? @map("approved_at")
+  paymentRef       String?   @map("payment_ref")
+  paidAt           DateTime? @map("paid_at")
+  entryId          String?   @unique @map("entry_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  program          Program         @relation(fields: [programId], references: [id])
+  party            SettlementParty @relation(fields: [partyId], references: [id])
+  entry            JournalEntry?   @relation("SettlementEntry", fields: [entryId], references: [id])
+  lines            SettlementLine[]
+
+  @@index([programId])
+  @@index([partyId])
+  @@map("settlement_runs")
+}
+
+model SettlementLine {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId           String   @map("run_id") @db.Uuid
+  authorizationId String   @map("authorization_id") @db.Uuid
+  amount          BigInt
+  currency        String   @db.Char(3)
+  lineType        String   @map("line_type") // REDEMPTION | FEE | ADJUSTMENT | REVERSAL
+  description     String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  run             SettlementRun  @relation(fields: [runId], references: [id])
+  authorization   Authorization  @relation(fields: [authorizationId], references: [id])
+
+  @@index([runId])
+  @@map("settlement_lines")
+}
+
+model RedemptionPartyLink {
+  authorizationId String   @map("authorization_id") @db.Uuid
+  partyId         String   @map("party_id") @db.Uuid
+  merchantToken   String   @map("merchant_token")
+  splitPercent    Decimal? @map("split_percent") @db.Decimal(5, 2)
+
+  authorization   Authorization   @relation(fields: [authorizationId], references: [id])
+  party           SettlementParty @relation(fields: [partyId], references: [id])
+
+  @@id([authorizationId, partyId])
+  @@map("redemption_party_links")
+}
+
+// ─── DORMANCY ASSESSMENTS ─────────────────────────────────────────────────────
+model DormancyAssessment {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId        String   @map("card_id") @db.Uuid
+  programId     String   @map("program_id") @db.Uuid
+  dormantSince  DateTime @map("dormant_since")
+  feeAmount     BigInt   @map("fee_amount")
+  currency      String   @db.Char(3)
+  monthsDormant Int      @map("months_dormant")
+  entryId       String?  @map("entry_id") @db.Uuid
+  assessedAt    DateTime @default(now()) @map("assessed_at")
+  waived        Boolean  @default(false)
+  waivedReason  String?  @map("waived_reason")
+
+  card          Card         @relation(fields: [cardId], references: [id])
+  program       Program      @relation(fields: [programId], references: [id])
+  entry         JournalEntry? @relation(fields: [entryId], references: [id])
+
+  @@index([cardId])
+  @@index([programId])
+  @@map("dormancy_assessments")
+}
+
+// ─── ESCHEATMENT ──────────────────────────────────────────────────────────────
+model EscheatmentRecord {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId        String    @map("card_id") @db.Uuid
+  programId     String    @map("program_id") @db.Uuid
+  stateCode     String    @map("state_code") @db.Char(2)
+  holderState   String?   @map("holder_state") @db.Char(2)
+  propertyType  String    @map("property_type")
+  amount        BigInt
+  currency      String    @db.Char(3)
+  dormantSince  DateTime  @map("dormant_since")
+  eligibleAt    DateTime  @map("eligible_at")
+  status        String    @default("PENDING") // PENDING | REPORTED | REMITTED | RECLAIMED
+  filingId      String?   @map("filing_id") @db.Uuid
+  entryId       String?   @map("entry_id") @db.Uuid
+  reportedAt    DateTime? @map("reported_at")
+  remittedAt    DateTime? @map("remitted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  card          Card              @relation(fields: [cardId], references: [id])
+  program       Program           @relation(fields: [programId], references: [id])
+  filing        EscheatmentFiling? @relation(fields: [filingId], references: [id])
+  entry         JournalEntry?     @relation(fields: [entryId], references: [id])
+
+  @@index([programId, stateCode])
+  @@index([status])
+  @@map("escheatment_records")
+}
+
+model EscheatmentFiling {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId    String    @map("program_id") @db.Uuid
+  stateCode    String    @map("state_code") @db.Char(2)
+  reportYear   Int       @map("report_year") @db.SmallInt
+  reportPeriod String    @map("report_period")
+  naupaS3Key   String?   @map("naupa_s3_key")
+  totalAmount  BigInt    @map("total_amount")
+  recordCount  Int       @map("record_count")
+  status       String    @default("DRAFT") // DRAFT | SUBMITTED | ACCEPTED | REJECTED
+  submittedAt  DateTime? @map("submitted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  program      Program            @relation(fields: [programId], references: [id])
+  records      EscheatmentRecord[]
+
+  @@index([programId, stateCode])
+  @@map("escheatment_filings")
+}
+
+// ─── DISPUTES ─────────────────────────────────────────────────────────────────
+model Dispute {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId                  String    @map("card_id") @db.Uuid
+  authorizationId         String?   @map("authorization_id") @db.Uuid
+  programId               String    @map("program_id") @db.Uuid
+  disputeType             String    @map("dispute_type") // UNAUTHORIZED | ITEM_NOT_RECEIVED | NOT_AS_DESCRIBED | DUPLICATE | CREDIT_NOT_PROCESSED | OTHER
+  status                  String    @default("SUBMITTED") // SUBMITTED | UNDER_REVIEW | PROVISIONAL_CREDIT_ISSUED | WON | LOST | WITHDRAWN
+  amount                  BigInt
+  currency                String    @db.Char(3)
+  description             String
+  evidenceS3Keys          String[]  @map("evidence_s3_keys")
+  provisionalCreditEntryId String?  @unique @map("provisional_credit_entry_id") @db.Uuid
+  resolutionEntryId       String?   @unique @map("resolution_entry_id") @db.Uuid
+  assignedTo              String?   @map("assigned_to") @db.Uuid
+  resolvedAt              DateTime? @map("resolved_at")
+  resolution              String?
+  merchantResponse        Json?     @map("merchant_response")
+  createdAt               DateTime  @default(now()) @map("created_at")
+
+  card                    Card         @relation(fields: [cardId], references: [id])
+  assignee                User?        @relation("AssignedTo", fields: [assignedTo], references: [id])
+  provisionalCreditEntry  JournalEntry? @relation("DisputeCredit", fields: [provisionalCreditEntryId], references: [id])
+  resolutionEntry         JournalEntry? @relation("DisputeReversal", fields: [resolutionEntryId], references: [id])
+
+  @@index([cardId])
+  @@index([programId, status])
+  @@map("disputes")
+}
+
+// ─── WALLET TOKENS ────────────────────────────────────────────────────────────
+model WalletToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId      String    @map("card_id") @db.Uuid
+  walletType  String    @map("wallet_type") // APPLE_PAY | GOOGLE_PAY
+  walletToken String    @map("wallet_token")
+  deviceId    String    @map("device_id")
+  status      String    @default("ACTIVE") // ACTIVE | SUSPENDED | DELETED
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  card        Card      @relation(fields: [cardId], references: [id])
+
+  @@index([cardId])
+  @@map("wallet_tokens")
+}
+
+// ─── PENDING RELOADS ──────────────────────────────────────────────────────────
+model PendingReload {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId                String    @map("card_id") @db.Uuid
+  amount                BigInt
+  currency              String    @db.Char(3)
+  stripePaymentIntentId String    @unique @map("stripe_payment_intent_id")
+  status                String    @default("PENDING") // PENDING | COMPLETED | FAILED
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  card                  Card      @relation(fields: [cardId], references: [id])
+
+  @@index([cardId])
+  @@map("pending_reloads")
+}
+
+// ─── WEBHOOKS ─────────────────────────────────────────────────────────────────
+model WebhookEndpoint {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId   String    @map("program_id") @db.Uuid
+  url         String
+  description String?
+  secret      String    // AES-256-GCM encrypted HMAC signing secret
+  events      String[]  // ['card.issued', 'card.authorized', ...]
+  status      String    @default("ACTIVE") // ACTIVE | INACTIVE
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  deliveries  WebhookDelivery[]
+
+  @@index([programId])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  endpointId      String    @map("endpoint_id") @db.Uuid
+  event           String
+  payload         Json
+  status          String    @default("PENDING") // PENDING | SUCCESS | FAILED | EXHAUSTED
+  attemptCount    Int       @default(0) @map("attempt_count") @db.SmallInt
+  nextAttemptAt   DateTime? @map("next_attempt_at")
+  lastHttpStatus  Int?      @map("last_http_status") @db.SmallInt
+  lastResponseBody String?  @map("last_response_body") @db.VarChar(1000)
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  endpoint        WebhookEndpoint @relation(fields: [endpointId], references: [id])
+
+  @@index([endpointId])
+  @@index([status, nextAttemptAt])
+  @@map("webhook_deliveries")
+}
+
+// ─── IDEMPOTENCY KEYS ─────────────────────────────────────────────────────────
+model IdempotencyKey {
+  key            String   @db.VarChar(128)
+  method         String   @db.VarChar(10)
+  path           String   @db.VarChar(255)
+  responseStatus Int      @map("response_status") @db.SmallInt
+  responseBody   Json     @map("response_body")
+  requestHash    String   @map("request_hash")
+  createdAt      DateTime @default(now()) @map("created_at")
+  expiresAt      DateTime @map("expires_at")
+
+  @@id([key, method, path])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// ─── AUDIT LOGS ───────────────────────────────────────────────────────────────
+model AuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  action       String
+  category     String   // USER | CARD | LEDGER | ORDER | FRAUD | SYSTEM | AUTH
+  actorId      String?  @map("actor_id") @db.Uuid
+  actorEmail   String?  @map("actor_email")
+  resourceType String?  @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  programId    String?  @map("program_id") @db.Uuid
+  ipAddress    String?  @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  details      Json     @default("{}")
+  requestId    String?  @map("request_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  actor        User?    @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([programId])
+  @@index([category])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ─── GL MAPPINGS ──────────────────────────────────────────────────────────────
+model GlMapping {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId     String   @map("program_id") @db.Uuid
+  accountType   String   @map("account_type")
+  glAccountCode String   @map("gl_account_code")
+  glDescription String   @map("gl_description")
+  erpSystem     String   @map("erp_system") // SAP | ORACLE | NETSUITE | GENERIC
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  program       Program  @relation(fields: [programId], references: [id])
+
+  @@unique([programId, accountType])
+  @@map("gl_mappings")
+}
+
+// ─── HR EVENT RULES ───────────────────────────────────────────────────────────
+model HrEventRule {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId     String   @map("program_id") @db.Uuid
+  eventType     String   @map("event_type") // NEW_HIRE | WORK_ANNIVERSARY | PERFORMANCE_AWARD | BIRTHDAY | RETIREMENT
+  campaignId    String?  @map("campaign_id") @db.Uuid
+  amountCents   BigInt   @map("amount_cents")
+  cardType      String   @default("VIRTUAL") @map("card_type")
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  program       Program  @relation(fields: [programId], references: [id])
+
+  @@unique([programId, eventType])
+  @@map("hr_event_rules")
+}
+
+// ─── RECONCILIATION LOGS ──────────────────────────────────────────────────────
+model ReconciliationLog {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId          String   @map("program_id") @db.Uuid
+  asOf               DateTime @map("as_of")
+  floatBalance       BigInt   @map("float_balance")
+  totalCardBalances  BigInt   @map("total_card_balances")
+  pendingAuths       BigInt   @map("pending_auths")
+  variance           BigInt
+  status             String   // BALANCED | VARIANCE | CRITICAL
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  program            Program  @relation(fields: [programId], references: [id])
+
+  @@index([programId, createdAt(sort: Desc)])
+  @@map("reconciliation_logs")
+}

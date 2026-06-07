@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/vault-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("VAULT_DATABASE_URL")
+}
+
+model VaultRecord {
+  token      String   @id
+  ciphertext String
+  iv         String
+  keyVersion Int      @map("key_version")
+  last4      String   @db.Char(4)
+  bin        String   @db.VarChar(8)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("vault_records")
+}
+
+model VaultRevealLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  token       String
+  requesterId String   @map("requester_id")
+  reason      String
+  ipAddress   String?  @map("ip_address")
+  revealedAt  DateTime @default(now()) @map("revealed_at")
+
+  @@index([token])
+  @@index([revealedAt(sort: Desc)])
+  @@map("vault_reveal_log")
+}
+
+model EncryptionKey {
+  version   Int      @id
+  status    String   // ACTIVE | ROTATING | RETIRED
+  createdAt DateTime @default(now()) @map("created_at")
+  retiredAt DateTime? @map("retired_at")
+
+  @@map("encryption_keys")
+}

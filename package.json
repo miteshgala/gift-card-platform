@@ -2,24 +2,31 @@
   "name": "gift-card-platform",
   "version": "1.0.0",
   "private": true,
-  "description": "Enterprise Gift Card Management Platform",
   "workspaces": [
-    "backend",
-    "frontend"
+    "services/*",
+    "frontends/*"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
-    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
-    "test": "npm run test --workspace=backend",
-    "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend",
-    "db:migrate": "npm run db:migrate --workspace=backend",
-    "db:studio": "npm run db:studio --workspace=backend"
+    "dev": "concurrently -n api,vault,fraud,worker,admin,ch -c cyan,magenta,yellow,green,blue,white \"npm run dev -w services/api\" \"npm run dev -w services/vault\" \"npm run dev -w services/fraud\" \"npm run dev -w services/worker\" \"npm run dev -w frontends/admin\" \"npm run dev -w frontends/cardholder\"",
+    "dev:api": "concurrently -n api,vault,fraud,worker -c cyan,magenta,yellow,green \"npm run dev -w services/api\" \"npm run dev -w services/vault\" \"npm run dev -w services/fraud\" \"npm run dev -w services/worker\"",
+    "dev:fe": "concurrently -n admin,cardholder -c blue,white \"npm run dev -w frontends/admin\" \"npm run dev -w frontends/cardholder\"",
+    "build": "npm run build -w services/api && npm run build -w services/vault && npm run build -w services/fraud && npm run build -w services/worker && npm run build -w frontends/admin && npm run build -w frontends/cardholder",
+    "build:api": "npm run build -w services/api && npm run build -w services/vault && npm run build -w services/fraud && npm run build -w services/worker",
+    "build:fe": "npm run build -w frontends/admin && npm run build -w frontends/cardholder",
+    "test": "npm run test -w services/api",
+    "test:coverage": "npm run test:coverage -w services/api",
+    "db:migrate": "npm run db:migrate -w services/api",
+    "db:seed": "npm run db:seed -w services/api",
+    "db:studio": "npm run db:studio -w services/api",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^9.1.2"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0",
     "npm": ">=10.0.0"
   }
 }

@@ -1,84 +1,251 @@
 version: '3.9'
 
 services:
+  # ─── Databases ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: giftcard_postgres
-    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-giftcard}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-giftcard_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-giftcard_db}
+      POSTGRES_DB: giftcard
+      POSTGRES_USER: giftcard
+      POSTGRES_PASSWORD: giftcard_dev
     ports:
-      - '5432:5432'
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-giftcard}']
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U giftcard"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
+  postgres_vault:
+    image: postgres:16-alpine
+    container_name: giftcard_postgres_vault
+    environment:
+      POSTGRES_DB: vault
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD: vault_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_vault_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: giftcard_redis
-    restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secret}
     ports:
-      - '6379:6379'
+      - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-  backend:
+  # ─── Kafka (KRaft mode — no Zookeeper) ────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: giftcard_kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ─── Vault Service (PCI-isolated) ─────────────────────────────────────────
+  vault:
     build:
-      context: ./backend
+      context: ./services/vault
       dockerfile: Dockerfile
-      target: development
-    container_name: giftcard_backend
+    container_name: giftcard_vault
+    ports:
+      - "4001:4001"
+    environment:
+      VAULT_PORT: 4001
+      NODE_ENV: development
+      VAULT_DATABASE_URL: postgresql://vault:vault_dev@postgres_vault:5432/vault
+      VAULT_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000001
+      VAULT_TOKENIZATION_SECRET: dev-tokenization-secret-change-in-production
+      VAULT_INTERNAL_SECRET: dev-vault-secret
+    depends_on:
+      postgres_vault:
+        condition: service_healthy
     restart: unless-stopped
+
+  # ─── Fraud Engine ──────────────────────────────────────────────────────────
+  fraud:
+    build:
+      context: ./services/fraud
+      dockerfile: Dockerfile
+    container_name: giftcard_fraud
+    ports:
+      - "4002:4002"
+    environment:
+      FRAUD_PORT: 4002
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Core API ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: giftcard_api
+    ports:
+      - "4000:4000"
+      - "9090:9090"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      METRICS_PORT: 9090
+      DATABASE_URL: postgresql://giftcard:giftcard_dev@postgres:5432/giftcard
+      DATABASE_READ_URL: postgresql://giftcard:giftcard_dev@postgres:5432/giftcard
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+      VAULT_URL: http://vault:4001
+      VAULT_INTERNAL_SECRET: dev-vault-secret
+      FRAUD_ENGINE_URL: http://fraud:4002
+      FRAUD_ENGINE_TIMEOUT_MS: 80
+      # SECURITY: Replace ALL of these in production with real secrets
+      JWT_PRIVATE_KEY: ""     # Set via secrets manager
+      JWT_PUBLIC_KEY: ""      # Set via secrets manager
+      JWT_ACCESS_EXPIRES_SECONDS: 900
+      JWT_REFRESH_EXPIRES_SECONDS: 604800
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      AWS_REGION: us-east-1
+      AWS_SES_FROM_EMAIL: noreply@giftcards.example.com
+      S3_BUCKET: giftcard-platform-dev
+      FRONTEND_URL: http://localhost:3000
+      API_URL: http://localhost:4000
+      RECON_VARIANCE_THRESHOLD_CENTS: "100"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      vault:
+        condition: service_started
+      fraud:
+        condition: service_started
+    restart: unless-stopped
+
+  # ─── Background Worker ─────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    container_name: giftcard_worker
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://${POSTGRES_USER:-giftcard}:${POSTGRES_PASSWORD:-giftcard_secret}@postgres:5432/${POSTGRES_DB:-giftcard_db}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379
-      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_jwt_secret_32chars}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_in_production_refresh_32chars}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change_me_32_char_encryption_key_}
-      PORT: 4000
-    ports:
-      - '4000:4000'
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-    command: npm run dev
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: development
-    container_name: giftcard_frontend
-    restart: unless-stopped
+      DATABASE_URL: postgresql://giftcard:giftcard_dev@postgres:5432/giftcard
+      DATABASE_READ_URL: postgresql://giftcard:giftcard_dev@postgres:5432/giftcard
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+      VAULT_URL: http://vault:4001
+      VAULT_INTERNAL_SECRET: dev-vault-secret
+      FRAUD_ENGINE_URL: http://fraud:4002
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+      JWT_PRIVATE_KEY: ""
+      JWT_PUBLIC_KEY: ""
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      AWS_REGION: us-east-1
+      AWS_SES_FROM_EMAIL: noreply@giftcards.example.com
+      S3_BUCKET: giftcard-platform-dev
+      FRONTEND_URL: http://localhost:3000
+      API_URL: http://localhost:4000
+      RECON_VARIANCE_THRESHOLD_CENTS: "100"
     depends_on:
-      - backend
-    environment:
-      VITE_API_URL: http://localhost:4000/api/v1
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # ─── Admin Frontend ────────────────────────────────────────────────────────
+  admin:
+    build:
+      context: ./frontends/admin
+      dockerfile: Dockerfile
+    container_name: giftcard_admin
     ports:
-      - '3000:3000'
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ─── Cardholder Portal ────────────────────────────────────────────────────
+  cardholder:
+    build:
+      context: ./frontends/cardholder
+      dockerfile: Dockerfile
+    container_name: giftcard_cardholder
+    ports:
+      - "3001:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ─── Nginx Gateway (optional — wraps all services behind one port) ─────────
+  # Access: admin → :80  cardholder → :8080  api direct → :8090
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: giftcard_nginx
+    ports:
+      - "80:80"
+      - "8080:8080"
+      - "8090:8090"
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: npm run dev -- --host
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - admin
+      - cardholder
+    restart: unless-stopped
+    profiles:
+      - gateway   # opt-in: docker compose --profile gateway up
 
 volumes:
   postgres_data:
+  postgres_vault_data:
   redis_data:
+  kafka_data:

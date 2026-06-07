@@ -2,98 +2,337 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag override (default: git SHA)'
+        description: 'Image tag override (default: git SHA short)'
         required: false
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  REPO: ${{ github.repository }}
+
+# ── Reusable job for building + pushing a single Docker image ─────────────────
+# GitHub Actions doesn't support true job templates yet, so each service
+# has its own job. The steps are identical except for build-context and name.
 
 jobs:
-  # ─── Build & push backend Docker image ────────────────────────────────────
-  docker-backend:
-    name: Docker — build & push backend
+  # ─── Determine image tag ──────────────────────────────────────────────────
+  tag:
+    name: Resolve image tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve tag
+        id: resolve
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ─── Build: API ───────────────────────────────────────────────────────────
+  build-api:
+    name: Docker — api
+    runs-on: ubuntu-latest
+    needs: tag
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
         id: meta
-        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend
+          images: ${{ env.REGISTRY }}/${{ env.REPO }}-api
           tags: |
-            type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
+            type=raw,value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: ./services/api
+          dockerfile: ./services/api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
 
-  # ─── Create GitHub Release on version tags ─────────────────────────────────
+  # ─── Build: Vault ─────────────────────────────────────────────────────────
+  build-vault:
+    name: Docker — vault
+    runs-on: ubuntu-latest
+    needs: tag
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO }}-vault
+          tags: |
+            type=raw,value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./services/vault
+          dockerfile: ./services/vault/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=vault
+          cache-to: type=gha,scope=vault,mode=max
+
+  # ─── Build: Fraud ─────────────────────────────────────────────────────────
+  build-fraud:
+    name: Docker — fraud
+    runs-on: ubuntu-latest
+    needs: tag
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO }}-fraud
+          tags: |
+            type=raw,value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./services/fraud
+          dockerfile: ./services/fraud/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=fraud
+          cache-to: type=gha,scope=fraud,mode=max
+
+  # ─── Build: Worker ────────────────────────────────────────────────────────
+  build-worker:
+    name: Docker — worker
+    runs-on: ubuntu-latest
+    needs: tag
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO }}-worker
+          tags: |
+            type=raw,value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          dockerfile: ./services/worker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max
+
+  # ─── Build: Admin frontend ────────────────────────────────────────────────
+  build-admin:
+    name: Docker — admin
+    runs-on: ubuntu-latest
+    needs: tag
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO }}-admin
+          tags: |
+            type=raw,value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontends/admin
+          dockerfile: ./frontends/admin/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=admin
+          cache-to: type=gha,scope=admin,mode=max
+
+  # ─── Build: Cardholder frontend ───────────────────────────────────────────
+  build-cardholder:
+    name: Docker — cardholder
+    runs-on: ubuntu-latest
+    needs: tag
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.REPO }}-cardholder
+          tags: |
+            type=raw,value=${{ needs.tag.outputs.tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontends/cardholder
+          dockerfile: ./frontends/cardholder/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=cardholder
+          cache-to: type=gha,scope=cardholder,mode=max
+
+  # ─── GitHub Release (tag pushes only) ────────────────────────────────────
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [docker-backend]
+    needs:
+      - build-api
+      - build-vault
+      - build-fraud
+      - build-worker
+      - build-admin
+      - build-cardholder
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Generate release notes
-        id: notes
+      - name: Generate changelog
+        id: changelog
         run: |
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            CHANGES=$(git log ${PREV_TAG}..HEAD --oneline --no-merges)
+            CHANGES=$(git log "${PREV_TAG}..HEAD" --oneline --no-merges | head -50)
           else
-            CHANGES=$(git log --oneline --no-merges | head -20)
+            CHANGES=$(git log --oneline --no-merges | head -30)
           fi
-          echo "CHANGES<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "CHANGES<<EOF"
+            echo "$CHANGES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: actions/github-script@v7
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ env.REPO }}
+          CHANGES: ${{ steps.changelog.outputs.CHANGES }}
+          REGISTRY: ${{ env.REGISTRY }}
         with:
           script: |
+            const tag = process.env.TAG;
+            const registry = process.env.REGISTRY;
+            const repo = process.env.REPO.toLowerCase();
+            const changes = process.env.CHANGES;
+            const isPrerelease = tag.includes('-rc') || tag.includes('-beta') || tag.includes('-alpha');
+
+            const images = ['api','vault','fraud','worker','admin','cardholder']
+              .map(s => `\`${registry}/${repo}-${s}:${tag}\``)
+              .join('\n');
+
             await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: context.ref.replace('refs/tags/', ''),
-              name: context.ref.replace('refs/tags/', ''),
-              body: `## Changes\n\n${{ steps.notes.outputs.CHANGES }}\n\n## Docker Image\n\n\`\`\`\ndocker pull ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}\n\`\`\``,
+              tag_name: tag,
+              name: tag,
+              body: [
+                '## Changes',
+                '',
+                changes,
+                '',
+                '## Docker Images',
+                '',
+                images,
+              ].join('\n'),
               draft: false,
-              prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }},
+              prerelease: isPrerelease,
             });

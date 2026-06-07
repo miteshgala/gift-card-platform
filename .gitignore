@@ -1,0 +1,68 @@
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─── Build outputs ────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ─── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# .env.example files ARE committed — they are the template, not the secret
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Test / coverage ──────────────────────────────────────────────────────────
+coverage/
+*.lcov
+.nyc_output/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# ─── Vite cache ───────────────────────────────────────────────────────────────
+.vite/
+
+# ─── Prisma generated client (regenerated via prisma generate) ────────────────
+**/node_modules/.prisma/
+
+# ─── IDE / editor ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+._*
+Thumbs.db
+
+# ─── Docker overrides (may contain local secrets) ─────────────────────────────
+docker-compose.override.yml
+
+# ─── Keys / certificates ──────────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# ─── Misc tooling caches ──────────────────────────────────────────────────────
+.turbo/
+.cache/
+tmp/
+temp/
