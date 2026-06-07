@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, CreditCard, ShoppingCart, Users, Shield,
   AlertTriangle, BarChart2, Webhook, Settings, LogOut,
-  Building2, Handshake, List, UserCheck, TrendingUp,
+  Building2, Handshake, List, UserCheck, TrendingUp, SlidersHorizontal,
 } from 'lucide-react';
 import { clearTokens, getCurrentUser } from '@/lib/auth';
 import clsx from 'clsx';
@@ -22,6 +22,7 @@ const navItems = [
   { to: '/kyc',         label: 'KYC / KYB',   icon: UserCheck },
   { to: '/analytics',   label: 'Analytics',    icon: TrendingUp },
   { to: '/audit-log',   label: 'Audit Log',    icon: List },
+  { to: '/settings',    label: 'Settings',     icon: SlidersHorizontal },
 ];
 
 export default function Layout() {

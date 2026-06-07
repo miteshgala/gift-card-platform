@@ -81,6 +81,14 @@ export const authController = {
     } catch (err) { next(err); }
   },
 
+  async changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+      await authService.changePassword(req.user!.id, currentPassword, newPassword, req);
+      res.json({ data: { success: true }, meta: { requestId: req.requestId } });
+    } catch (err) { next(err); }
+  },
+
   async jwks(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       res.setHeader('Cache-Control', 'public, max-age=3600');

@@ -23,6 +23,7 @@ const AuditLogPage = lazy(() => import('@/pages/AuditLogPage'));
 const IntegrationsPage = lazy(() => import('@/pages/IntegrationsPage'));
 const KycPage = lazy(() => import('@/pages/KycPage'));
 const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="kyc" element={<KycPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="audit-log" element={<AuditLogPage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

@@ -363,3 +363,43 @@ cardholderRouter.post('/pin/change', authenticateCardholder, cardholderRateLimit
     res.json({ data: { success: true }, meta: { requestId: req.requestId } });
   } catch (err) { next(err); }
 });
+
+// ─── POST /cardholder/register ────────────────────────────────────────────────
+// Register a card to an email/phone for notifications (unauthenticated — card num + last4 as proof)
+cardholderRouter.post('/register', cardholderRateLimit, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { cardNumber, pin, email, phone } = z.object({
+      cardNumber: z.string().regex(/^\d{16}$/),
+      pin: z.string().regex(/^\d{4,6}$/),
+      email: z.string().email().optional(),
+      phone: z.string().regex(/^\+\d{7,15}$/).optional(),
+    }).refine((d) => d.email || d.phone, { message: 'email or phone is required' })
+      .parse(req.body);
+
+    // Authenticate by card number + PIN (same flow as cardholder login)
+    const last4 = cardNumber.slice(-4);
+    const cards = await prismaRead.card.findMany({
+      where: { last4, status: { in: ['ACTIVE', 'PENDING_ACTIVATION'] } },
+      include: { pin: true },
+    });
+
+    let matchedCard = null;
+    for (const card of cards) {
+      if (card.pin && await bcrypt.compare(pin, card.pin.pinHash)) {
+        matchedCard = card;
+        break;
+      }
+    }
+    if (!matchedCard) throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid card number or PIN');
+
+    await prisma.card.update({
+      where: { id: matchedCard.id },
+      data: {
+        recipientEmail: email ?? matchedCard.recipientEmail,
+        recipientPhone: phone ?? matchedCard.recipientPhone,
+      },
+    });
+
+    res.json({ data: { success: true, cardId: matchedCard.id }, meta: { requestId: req.requestId } });
+  } catch (err) { next(err); }
+});

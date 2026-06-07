@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { api, formatCents, formatDate } from '@/lib/api';
 import CardShell from '@/components/CardShell';
 
@@ -36,6 +37,22 @@ export default function BalancePage() {
         ) : (
           <div className="text-center py-8 text-gray-400 text-sm">Unable to load card details</div>
         )}
+
+        {/* Quick actions */}
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <Link
+            to="/pin"
+            className="flex items-center justify-center rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Change PIN
+          </Link>
+          <Link
+            to="/dispute"
+            className="flex items-center justify-center rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            File Dispute
+          </Link>
+        </div>
       </div>
     </CardShell>
   );

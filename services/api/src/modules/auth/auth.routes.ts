@@ -16,7 +16,8 @@ authRouter.post('/accept-invite',   authLimiter, idempotency, authController.acc
 authRouter.get('/jwks',             authController.jwks);
 
 // Authenticated routes
-authRouter.get('/me',               authenticate, authController.me);
-authRouter.post('/totp/setup',      authenticate, authController.setupTotp);
-authRouter.post('/totp/verify',     authenticate, idempotency, authController.confirmTotp);
-authRouter.post('/totp/disable',    authenticate, idempotency, authController.disableTotp);
+authRouter.get('/me',                  authenticate, authController.me);
+authRouter.post('/change-password',    authenticate, idempotency, authController.changePassword);
+authRouter.post('/totp/setup',         authenticate, authController.setupTotp);
+authRouter.post('/totp/verify',        authenticate, idempotency, authController.confirmTotp);
+authRouter.post('/totp/disable',       authenticate, idempotency, authController.disableTotp);

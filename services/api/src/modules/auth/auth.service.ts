@@ -378,6 +378,32 @@ export async function disableTotp(userId: string, code: string): Promise<void> {
   });
 }
 
+// ─── Change own password ──────────────────────────────────────────────────────
+
+export async function changePassword(userId: string, currentPassword: string, newPassword: string, req: Request): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true, status: true } });
+  if (!user?.passwordHash) throw Errors.invalidCredentials();
+
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!valid) throw Errors.invalidCredentials();
+
+  const STRONG_PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{12,}$/;
+  if (!STRONG_PASSWORD_RE.test(newPassword)) {
+    throw new (await import('../../shared/errors/AppError')).AppError(422, 'WEAK_PASSWORD', 'Password must be at least 12 characters and include uppercase, lowercase, number, and symbol');
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 12);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
+
+  // Revoke all existing refresh tokens so other sessions are forced to re-login
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+
+  void writeAuditLog({ action: 'PASSWORD_CHANGED', category: 'AUTH', req, resourceId: userId });
+}
+
 // ─── JWKS endpoint (public) ───────────────────────────────────────────────────
 
 export function getJwks(): object {

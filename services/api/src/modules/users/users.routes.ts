@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { authenticate, authorize } from '../../shared/middleware/authenticate';
 import { idempotency } from '../../shared/middleware/idempotency';
 import { writeAuditLog } from '../../shared/middleware/auditLog';
+import { generateApiKey } from '../../shared/utils/crypto';
+import { prisma, prismaRead } from '../../shared/db/prisma';
 import * as usersService from './users.service';
 
 export const usersRouter = Router();
@@ -58,6 +60,82 @@ usersRouter.get('/me', authenticate, async (req: Request, res: Response, next: N
   try {
     const user = await usersService.getUser(req.user!.id);
     res.json({ data: user, meta: { requestId: req.requestId } });
+  } catch (err) { next(err); }
+});
+
+// ─── Update own profile ───────────────────────────────────────────────────────
+const updateProfileSchema = z.object({
+  firstName: z.string().min(1).max(60).optional(),
+  lastName: z.string().min(1).max(60).optional(),
+});
+
+usersRouter.patch('/me', authenticate, idempotency, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = updateProfileSchema.parse(req.body);
+    const updated = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { firstName: input.firstName, lastName: input.lastName },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true, programId: true },
+    });
+    void writeAuditLog({ action: 'USER_PROFILE_UPDATED', category: 'USER', req, resourceId: req.user!.id });
+    res.json({ data: updated, meta: { requestId: req.requestId } });
+  } catch (err) { next(err); }
+});
+
+// ─── List own API keys ────────────────────────────────────────────────────────
+usersRouter.get('/me/api-keys', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const keys = await prismaRead.apiKey.findMany({
+      where: { userId: req.user!.id, revokedAt: null },
+      select: { id: true, keyPrefix: true, name: true, programId: true, createdAt: true, lastUsedAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ data: keys, meta: { requestId: req.requestId } });
+  } catch (err) { next(err); }
+});
+
+// ─── Create API key ───────────────────────────────────────────────────────────
+const createApiKeySchema = z.object({
+  label: z.string().min(1).max(100),
+  programId: z.string().uuid().optional(),
+});
+
+usersRouter.post('/me/api-keys', authenticate, idempotency, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = createApiKeySchema.parse(req.body);
+    const programId = req.user!.programId ?? input.programId;
+    if (!programId) {
+      return res.status(400).json({ error: { code: 'PROGRAM_REQUIRED', message: 'programId is required for SUPER_ADMIN', requestId: req.requestId } });
+    }
+    const { fullKey, prefix, hash } = generateApiKey('live');
+    const key = await prisma.apiKey.create({
+      data: {
+        userId: req.user!.id,
+        programId,
+        keyPrefix: prefix,
+        keyHash: hash,
+        name: input.label,
+        environment: 'LIVE',
+        scopes: [],
+      },
+      select: { id: true, keyPrefix: true, name: true, programId: true, createdAt: true },
+    });
+    void writeAuditLog({ action: 'API_KEY_CREATED', category: 'USER', req, resourceId: key.id, details: { prefix, name: input.label } });
+    // Full key returned once only — never stored in plaintext
+    res.status(201).json({ data: { ...key, key: fullKey }, meta: { requestId: req.requestId } });
+  } catch (err) { next(err); }
+});
+
+// ─── Revoke own API key ───────────────────────────────────────────────────────
+usersRouter.delete('/me/api-keys/:keyId', authenticate, idempotency, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const key = await prismaRead.apiKey.findUnique({ where: { id: req.params['keyId'] as string } });
+    if (!key || key.userId !== req.user!.id) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'API key not found', requestId: req.requestId } });
+    }
+    await prisma.apiKey.update({ where: { id: key.id }, data: { revokedAt: new Date() } });
+    void writeAuditLog({ action: 'API_KEY_REVOKED', category: 'USER', req, resourceId: key.id });
+    res.json({ data: { success: true }, meta: { requestId: req.requestId } });
   } catch (err) { next(err); }
 });
 
