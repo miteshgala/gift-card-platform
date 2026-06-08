@@ -14,7 +14,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    setupFiles: ['./src/test/setup.ts', './src/__tests__/integration/setup.ts'],
+    // Note: do NOT include src/test/setup.ts here — it overrides DATABASE_URL with a
+    // test placeholder. Integration tests use the real DB credentials from environment.
+    setupFiles: ['./src/__tests__/integration/env-setup.ts', './src/__tests__/integration/setup.ts'],
     include: ['src/__tests__/integration/**/*.test.ts'],
     testTimeout: 30_000,
     // Integration tests must run serially — each test uses the same DB

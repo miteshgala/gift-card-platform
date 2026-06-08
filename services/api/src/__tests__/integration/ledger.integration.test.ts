@@ -13,7 +13,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma } from '@/shared/db/prisma';
 import { bootstrapProgramAccounts, bootstrapCardAccounts, getBalance, postLoad, postAuth, postCapture, postVoid, postReversal, postEntry } from '@/modules/ledger/ledger.service';
-import { createProgram } from '@/modules/programs/programs.service';
 import type { Prisma } from '@prisma/client';
 
 // ─── Test fixtures ────────────────────────────────────────────────────────────
