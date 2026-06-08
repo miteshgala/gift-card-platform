@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomUUID } from 'crypto';
 import { prisma } from '@/shared/db/prisma';
 import { bootstrapProgramAccounts, bootstrapCardAccounts, getBalance, postLoad, postAuth, postCapture, postVoid, postReversal, postEntry } from '@/modules/ledger/ledger.service';
 import type { Prisma } from '@prisma/client';
@@ -112,7 +113,7 @@ describe('Authorization → Capture flow', () => {
 
     // Create auth
     const authEntry = await postAuth({
-      authorizationId: `auth-${Date.now()}`,
+      authorizationId: randomUUID(),
       programId,
       cardAccountId,
       authHoldAccountId,
@@ -160,7 +161,7 @@ describe('Authorization → Void flow', () => {
 
     // Auth first
     const authEntry = await postAuth({
-      authorizationId: `auth-void-${Date.now()}`,
+      authorizationId: randomUUID(),
       programId,
       cardAccountId,
       authHoldAccountId,
@@ -194,7 +195,7 @@ describe('Reversal (refund) flow', () => {
     const cardBefore = await getBalance(cardAccountId);
 
     await postReversal({
-      authorizationId: `auth-reversal-${Date.now()}`,
+      authorizationId: randomUUID(),
       programId,
       floatAccountId,
       cardAccountId,
@@ -307,7 +308,7 @@ describe('Concurrent authorization — advisory lock', () => {
     const AUTH_EACH = 800n; // $8.00
     const [result1, result2] = await Promise.allSettled([
       postAuth({
-        authorizationId: `concurrent-auth-1-${Date.now()}`,
+        authorizationId: randomUUID(),
         programId,
         cardAccountId: testCardAccountId!,
         authHoldAccountId: testAuthHoldId!,
@@ -315,7 +316,7 @@ describe('Concurrent authorization — advisory lock', () => {
         currency: CURRENCY,
       }),
       postAuth({
-        authorizationId: `concurrent-auth-2-${Date.now()}`,
+        authorizationId: randomUUID(),
         programId,
         cardAccountId: testCardAccountId!,
         authHoldAccountId: testAuthHoldId!,
