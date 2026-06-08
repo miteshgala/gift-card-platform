@@ -11,7 +11,6 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { randomUUID } from 'crypto';
 import { prisma } from '@/shared/db/prisma';
 import { bootstrapProgramAccounts, bootstrapCardAccounts, getBalance, postLoad, postAuth, postCapture, postVoid, postReversal, postEntry } from '@/modules/ledger/ledger.service';
 import type { Prisma } from '@prisma/client';
@@ -113,7 +112,6 @@ describe('Authorization → Capture flow', () => {
 
     // Create auth
     const authEntry = await postAuth({
-      authorizationId: randomUUID(),
       programId,
       cardAccountId,
       authHoldAccountId,
@@ -133,7 +131,6 @@ describe('Authorization → Capture flow', () => {
     const holdBefore = await getBalance(authHoldAccountId);
 
     await postCapture({
-      authorizationId: authId,
       programId,
       authHoldAccountId,
       floatAccountId,
@@ -161,7 +158,6 @@ describe('Authorization → Void flow', () => {
 
     // Auth first
     const authEntry = await postAuth({
-      authorizationId: randomUUID(),
       programId,
       cardAccountId,
       authHoldAccountId,
@@ -174,7 +170,6 @@ describe('Authorization → Void flow', () => {
 
     // Void
     await postVoid({
-      authorizationId: authEntry.entryId,
       programId,
       authHoldAccountId,
       cardAccountId,
@@ -195,7 +190,6 @@ describe('Reversal (refund) flow', () => {
     const cardBefore = await getBalance(cardAccountId);
 
     await postReversal({
-      authorizationId: randomUUID(),
       programId,
       floatAccountId,
       cardAccountId,
@@ -308,16 +302,14 @@ describe('Concurrent authorization — advisory lock', () => {
     const AUTH_EACH = 800n; // $8.00
     const [result1, result2] = await Promise.allSettled([
       postAuth({
-        authorizationId: randomUUID(),
-        programId,
+          programId,
         cardAccountId: testCardAccountId!,
         authHoldAccountId: testAuthHoldId!,
         amount: AUTH_EACH,
         currency: CURRENCY,
       }),
       postAuth({
-        authorizationId: randomUUID(),
-        programId,
+          programId,
         cardAccountId: testCardAccountId!,
         authHoldAccountId: testAuthHoldId!,
         amount: AUTH_EACH,

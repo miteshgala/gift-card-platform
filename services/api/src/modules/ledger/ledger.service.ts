@@ -265,7 +265,7 @@ export async function postLoad(params: {
  * between authorization and capture/void.
  */
 export async function postAuth(params: {
-  authorizationId: string;
+  authorizationId?: string;  // optional: links entry to Authorization record
   programId: string;
   cardAccountId: string;
   authHoldAccountId: string;
@@ -291,7 +291,7 @@ export async function postAuth(params: {
  * DR AUTH_HOLD, CR FLOAT
  */
 export async function postCapture(params: {
-  authorizationId: string;
+  authorizationId?: string;
   programId: string;
   authHoldAccountId: string;
   floatAccountId: string;
@@ -319,7 +319,7 @@ export async function postCapture(params: {
  * DR AUTH_HOLD, CR CARD
  */
 export async function postVoid(params: {
-  authorizationId: string;
+  authorizationId?: string;
   programId: string;
   authHoldAccountId: string;
   cardAccountId: string;
@@ -345,7 +345,7 @@ export async function postVoid(params: {
  * DR FLOAT, CR CARD
  */
 export async function postReversal(params: {
-  authorizationId: string;
+  authorizationId?: string;
   programId: string;
   floatAccountId: string;
   cardAccountId: string;
